@@ -1,7 +1,7 @@
 import type { CommandInfo, HttpResponse, On, TurnStepInput } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
-import { pickTier } from '../hooks/register'
+import { pickTier } from '../lib/jev-router'
 
 type Reply = {
   tier?: Record<string, number>

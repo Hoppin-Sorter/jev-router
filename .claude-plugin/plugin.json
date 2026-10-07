@@ -1,6 +1,6 @@
 {
   "name": "jev-router",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Asks Jev before each prompt which Claude model the task needs and which skill (if any) fits, then switches the model and hints the skill.",
   "author": {
     "name": "Ethan Hoppin",

@@ -14,7 +14,9 @@ you: checkout double-charges users, find why  →  Opus 5.5   (risky)
 you: weekly signups by country in BigQuery    →  Sonnet 5.5 + hint: data:sql-queries
 ```
 
-> **Early access.** This uses Claude Code's function-hooks plugin API, which can change between releases. Built and tested on Claude Code 2.1.289.
+It also works outside Claude Code: load the plugin into the [Claude Agent SDK](#use-with-the-claude-agent-sdk), or drop the standalone [TypeScript or Python router](#use-in-your-own-agent) into any agent you build.
+
+> **Early access.** The plugin uses Claude Code's function-hooks plugin API, which can change between releases. Built and tested on Claude Code 2.1.289.
 
 ## Install
 
@@ -78,6 +80,73 @@ Set in `/plugin configure jev-router@jev-router`:
 | `skillHints` | `true` | Tell Claude which installed skill Jev picked. |
 | `effortRouting` | `false` | Also set reasoning effort by tier: routine → medium, complex → high, deep → xhigh. Haiku takes none. Off keeps your session's effort. |
 
+## Use with the Claude Agent SDK
+
+The [Agent SDK](https://code.claude.com/docs/en/agent-sdk/plugins) runs Claude Code as a library and loads local plugins. Clone this repo, then point the SDK at it:
+
+```ts
+import { query } from "@anthropic-ai/claude-agent-sdk";
+
+for await (const message of query({
+  prompt: "…",
+  options: { plugins: [{ type: "local", path: "/absolute/path/to/jev-router" }] },
+})) {
+  // the init message's `plugins` list should include jev-router
+}
+```
+
+Python: `ClaudeAgentOptions(plugins=[{"type": "local", "path": "/absolute/path/to/jev-router"}])`.
+
+Set `TYPESAFE_API_KEY` in the environment the SDK runs in (on a server, use your secrets manager). This path follows Anthropic's plugin docs but hasn't been tested end to end yet. If you try it, please open an issue with how it went.
+
+## Use in your own agent
+
+For an agent you build yourself on the Claude API, use the router directly. One file, no dependencies: [`lib/jev-router.ts`](lib/jev-router.ts) (Node 18+, Bun, Deno) or [`lib/jev_router.py`](lib/jev_router.py) (Python 3.9+, standard library). Copy it into your project and call it with each new user prompt:
+
+```ts
+import Anthropic from "@anthropic-ai/sdk";
+import { createRouter } from "./jev-router";
+
+const client = new Anthropic();
+const router = createRouter({
+  apiKey: process.env.TYPESAFE_API_KEY!, // your own key, never hard-coded
+  skills: [{ name: "sql-queries", description: "Write correct, performant SQL" }],
+});
+
+const r = await router.route(userMessage);
+// r = { tier, model, effort, skill, routed, why }
+const reply = await client.messages.create({
+  model: r.model,
+  max_tokens: 16000,
+  ...(r.effort && { output_config: { effort: r.effort } }),
+  messages: [{ role: "user", content: userMessage }],
+});
+```
+
+```python
+import os
+import anthropic
+from jev_router import Router
+
+client = anthropic.Anthropic()
+router = Router(api_key=os.environ["TYPESAFE_API_KEY"],
+                skills=[{"name": "sql-queries", "description": "Write correct, performant SQL"}])
+
+r = router.route(user_message)  # Route(tier, model, effort, skill, routed, why)
+reply = client.messages.create(
+    model=r.model,
+    max_tokens=16000,
+    messages=[{"role": "user", "content": user_message}],
+    **({"output_config": {"effort": r.effort}} if r.effort else {}),
+)
+```
+
+- **Same rules as the plugin:** doubt rounds up, risky prompts floor at Opus, and one router instance holds its tier for 10 minutes so follow-ups stay on the same model. Call `reset()` when a new task starts.
+- **`r.skill`** is the name of the skill Jev picked, or none. How you load it is up to your agent (for example, add that skill's instructions to the system prompt).
+- **If Jev fails** (no network, bad key, over 3 s), `routed` is false and you get the `fallback` tier (default `complex`), so a request never blocks on the router.
+- **Options:** `models` to change any tier's model, `holdMs` / `hold_seconds` (0 turns holding off), `timeoutMs` / `timeout`, `fallback`.
+- Off-the-shelf tools like Cursor or Codex generally don't let outside code switch their model per prompt, so the router fits agents where you make the API call yourself.
+
 ## Cost
 
 Jev is billed per input token on your TypeSafe account. Check [current pricing](https://docs.typesafe.ai/models). Each prompt sends your message plus a short list of your skills, so cost grows a little with how many skills you have. Routing simple prompts to Sonnet or Haiku usually saves more on the Claude side than Jev costs.
@@ -95,10 +164,14 @@ Per prompt, to `https://api.typesafe.ai/v1/systemone`: the first 6,000 character
 ## Development
 
 ```bash
-claude plugin validate .   # manifest + hooks
-claude plugin test .       # the tests in tests/
-claude --plugin-dir .      # load it for one session
+claude plugin validate .                      # plugin manifest + hooks
+claude plugin test .                          # plugin tests (tests/router.test.ts)
+node --test tests/jev-router.spec.ts          # TypeScript router
+python3 -m unittest discover -s tests         # Python router
+claude --plugin-dir .                         # load the plugin for one session
 ```
+
+The rubric, thresholds and decision logic live in `lib/jev-router.ts`; the plugin imports them, and `lib/jev_router.py` mirrors them. Change both together.
 
 ## Credits
 

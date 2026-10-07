@@ -1,14 +1,23 @@
 import type { CommandInfo, EngineInterface, Register } from 'claude-code'
+import {
+  buildRequest,
+  decide,
+  JEV_URL,
+  TIER_EFFORT,
+  TIERS,
+  type Effort,
+  type JevAnswers,
+  type Tier,
+} from '../lib/jev-router'
 
 // Before each prompt, one Jev request decides two things: which Claude model the
 // task needs (by complexity and risk) and which installed skill, if any, fits it.
 // The model (and, with effort routing on, the reasoning effort) is applied to every
 // main-loop request of the turn; the skill reaches Claude as a hidden note beside
-// the prompt.
+// the prompt. The rubric, thresholds and decision live in lib/jev-router.ts, shared
+// with agents that use the router outside Claude Code.
 
-type Tier = 'mechanical' | 'routine' | 'complex' | 'deep'
 type Mode = 'auto' | 'off' | Tier
-type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 type Decision = {
   at: number
@@ -20,43 +29,11 @@ type Decision = {
   skill?: string
 }
 
-type ChoiceAnswer = { choice: string; probabilities: Record<string, number> }
-type NoulAnswer = { noul: number }
-type JevAnswers = { tier?: ChoiceAnswer; risky?: NoulAnswer; skill?: ChoiceAnswer }
-
-const JEV_URL = 'https://api.typesafe.ai/v1/systemone'
-const TIERS: readonly Tier[] = ['mechanical', 'routine', 'complex', 'deep']
-
-const TIER_RUBRIC: Record<Tier, string> = {
-  mechanical:
-    'Lookups, renames, formatting, typo fixes, running a known command, or a quick factual question. Almost no reasoning; a mistake would be obvious and cheap.',
-  routine:
-    'Everyday development: implement a clearly specified feature, fix a bug whose cause is known, write tests, explain code, or edit a few files following existing patterns.',
-  complex:
-    'Ambiguous or multi-part work: debugging with an unclear cause, refactors across modules, design decisions, integrating an unfamiliar API, or reviewing code for subtle bugs.',
-  deep: 'Hard open-ended problems: system architecture, novel algorithms, security or concurrency analysis, long multi-step research, or work where a subtle error is costly.',
-}
-
-// How sure Jev must be that a tier is enough. The cheapest tier whose cumulative
-// probability clears its bar wins, so uncertainty always rounds up, never down.
-const ENOUGH: Record<Tier, number> = { mechanical: 0.85, routine: 0.7, complex: 0.5, deep: 0 }
-// With effort routing on, reasoning effort follows the tier. Haiku takes no effort.
-const TIER_EFFORT: Record<Tier, Effort | undefined> = {
-  mechanical: undefined,
-  routine: 'medium',
-  complex: 'high',
-  deep: 'xhigh',
-}
-const RISK_FLOOR = 0.7
-const SKILL_MIN = 0.5
 // Within an active stretch the tier only goes up: follow-ups like "yes, do it" stay
 // on the model that planned the work, and the prompt cache stays warm.
 const IDLE_RESET_MS = 10 * 60_000
 const JEV_TIMEOUT_MS = 3_000
 const CATALOG_TTL_MS = 5 * 60_000
-const MAX_SKILLS = 254 // a Choice takes 255 options; one is `none`
-const DESCRIPTION_CHARS = 200
-const PROMPT_CHARS = 6_000
 const HISTORY = 20
 
 // A person's prompt (or a host's) is routed; notifications, peers and the loop's
@@ -70,18 +47,7 @@ const LABELS: Record<string, string> = {
   'claude-fable-5-1': 'Fable 5.1',
 }
 const label = (model: string | undefined) => (model ? (LABELS[model] ?? model) : 'the session model')
-const pct = (p: number | undefined) => `${Math.round((p ?? 0) * 100)}%`
-const rank = (tier: Tier) => TIERS.indexOf(tier)
 const isMode = (v: unknown): v is Mode => v === 'auto' || v === 'off' || TIERS.includes(v as Tier)
-
-export function pickTier(probabilities: Record<string, number>): Tier {
-  let enough = 0
-  for (const tier of TIERS) {
-    enough += probabilities[tier] ?? 0
-    if (enough >= ENOUGH[tier]) return tier
-  }
-  return 'deep'
-}
 
 // The skill list, read once per few minutes rather than on every prompt.
 let catalog: { at: number; skills: CommandInfo[] } | undefined
@@ -111,7 +77,7 @@ async function skills($: EngineInterface): Promise<CommandInfo[]> {
     seen.add(c.name)
     return true
   })
-  catalog = { at: now, skills: list.slice(0, MAX_SKILLS) }
+  catalog = { at: now, skills: list }
   return catalog.skills
 }
 
@@ -122,37 +88,6 @@ async function askJev(
   wantTier: boolean,
   skillList: CommandInfo[],
 ): Promise<JevAnswers | { error: string }> {
-  const questions: Record<string, unknown> = {}
-  if (wantTier) {
-    questions.tier = {
-      type: 'choice',
-      instructions:
-        'How capable a model does a coding agent need to handle `user_message` well? Judge the difficulty of the work it asks for, not the length of the message.',
-      criteria: TIER_RUBRIC,
-    }
-    questions.risky = {
-      type: 'noul',
-      instructions:
-        'Could carrying out `user_message` affect production systems, credentials or secrets, permissions, billing, or delete data that may not be recoverable?',
-      criteria: {
-        true: 'It touches production, secrets, permissions, money, or irreversible deletion',
-        false: 'Local, reversible work',
-      },
-    }
-  }
-  if (skillList.length) {
-    const criteria: Record<string, string> = {
-      none: 'No listed skill clearly fits; the agent should just do the work itself.',
-    }
-    for (const s of skillList) criteria[s.name] = s.description.slice(0, DESCRIPTION_CHARS)
-    questions.skill = {
-      type: 'choice',
-      instructions:
-        'Which one skill should a coding agent load to handle `user_message`? Pick `none` unless a skill description clearly matches what the message asks for.',
-      criteria,
-    }
-  }
-
   const stop = new AbortController()
   const timeout = $.clock.sleep(JEV_TIMEOUT_MS, { signal: stop.signal }).then(
     () => 'timeout' as const,
@@ -163,11 +98,7 @@ async function askJev(
       $.http.fetch(JEV_URL, {
         method: 'POST',
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'jev-latest',
-          state: { user_message: prompt.slice(0, PROMPT_CHARS) },
-          questions,
-        }),
+        body: JSON.stringify(buildRequest(prompt, { tier: wantTier, skills: skillList })),
       }),
       timeout,
     ])
@@ -200,7 +131,7 @@ export const register: Register = (on, options) => {
   }
   const skillHints = options.skillHints !== false
   const effortRouting = options.effortRouting === true
-  const effortFor = (tier: Tier) => (effortRouting ? TIER_EFFORT[tier] : undefined)
+  const effortFor = (tier: Tier) => (effortRouting ? (TIER_EFFORT[tier] ?? undefined) : undefined)
 
   let mode: Mode = 'auto'
   let active: { tier: Tier; model: string; at: number } | undefined
@@ -241,21 +172,12 @@ export const register: Register = (on, options) => {
         await $.ui.status(`Jev: ${answers.error}; kept ${label(active?.model)}`)
         return next(e)
       }
-      if (wantTier && answers.tier) {
-        tier = pickTier(answers.tier.probabilities)
-        why = `Jev said ${answers.tier.choice} (${pct(answers.tier.probabilities[answers.tier.choice])})`
-        if ((answers.risky?.noul ?? 0) >= RISK_FLOOR && rank(tier) < rank('complex')) {
-          tier = 'complex'
-          why += `, risky (${pct(answers.risky?.noul)})`
-        }
-        if (active && rank(active.tier) > rank(tier)) {
-          why += `, held at ${active.tier}`
-          tier = active.tier
-        }
+      const d = decide(answers, active?.tier)
+      if (wantTier && d.tier) {
+        tier = d.tier
+        why = d.why
       }
-      const pick = answers.skill
-      const p = pick?.probabilities[pick.choice] ?? 0
-      if (pick && pick.choice !== 'none' && p >= SKILL_MIN) skill = { name: pick.choice, p }
+      skill = d.skill
     }
 
     active = { tier, model: models[tier], at: now }
