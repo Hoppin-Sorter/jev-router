@@ -16,7 +16,7 @@ export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type Provider = 'anthropic' | 'openai'
 export type Skill = { name: string; description: string }
 
-export type ChoiceAnswer = { choice: string; probabilities: Record<string, number> }
+export type ChoiceAnswer = { choice: string; probabilities: Record<string, number>; confidence?: number }
 export type JevAnswers = {
   tier?: ChoiceAnswer
   risky?: { noul: number }

@@ -19,6 +19,21 @@ import {
   type Subject,
   type Tier,
 } from '../lib/jev-router'
+import {
+  appendDecision,
+  CONFIG_DIR,
+  DECISIONS_FILE,
+  estimateTokens,
+  formatSettings,
+  jevCost,
+  LAST_FILE,
+  parseSettings,
+  SETTINGS_FILE,
+  type DecisionRecord,
+  type LastState,
+  type RouterMode,
+  type SharedSettings,
+} from '../lib/contract'
 import type { JevUi, LastRoute, Settings } from '../types'
 
 // Before each prompt, one Jev request judges how hard the task is, what it is about,
@@ -29,19 +44,13 @@ import type { JevUi, LastRoute, Settings } from '../types'
 // quality/cost focus, turns features on and off, and nudges the model up or down.
 // The rubric, thresholds and decisions live in lib/jev-router.ts, shared with agents
 // that use the router outside Claude Code.
+//
+// Shadow mode asks Jev and logs what it would pick without switching the model or
+// hinting a skill. The menu bar widget and this plugin share ~/.config/jev/ (see
+// lib/contract.ts): settings.json both ways, last.json and decisions.jsonl from here.
+// No prompt text is kept anywhere.
 
-type Mode = 'auto' | 'off' | Tier
-
-type Decision = {
-  at: number
-  prompt: string
-  tier: Tier
-  model: string
-  effort?: string
-  subject?: string
-  why: string
-  skill?: string
-}
+type Mode = RouterMode | Tier
 
 type Active = { tier: Tier; model: string; effort: string | null; at: number; specialist: boolean; subject?: Subject }
 
@@ -65,7 +74,9 @@ const LABELS: Record<string, string> = {
   'claude-fable-5-1': 'Fable 5.1',
 }
 const label = (model: string | undefined) => (model ? (LABELS[model] ?? model) : 'the session model')
-const isMode = (v: unknown): v is Mode => v === 'auto' || v === 'off' || TIERS.includes(v as Tier)
+const isMode = (v: unknown): v is Mode => v === 'auto' || v === 'shadow' || v === 'off' || TIERS.includes(v as Tier)
+/** A pinned tier is this session's own; the shared file only knows auto, shadow and off. */
+const sharedMode = (m: Mode): RouterMode => (m === 'shadow' || m === 'off' ? m : 'auto')
 const parseFocus = (v: string): Focus | undefined => {
   const n = Number(v)
   if (v.trim() !== '' && isFocus(n)) return n
@@ -96,6 +107,13 @@ let models: Record<Tier, string> = {
 }
 // The skill list, read once per few minutes rather than on every prompt.
 let catalog: { at: number; skills: CommandInfo[] } | undefined
+// The shared files: the newest settings.json applied here, the last nudge seen, this
+// session's id, and what last.json says now.
+let seenSettingsAt = 0
+let seenNudge: string | undefined
+let sessionId = ''
+let lastDecision: DecisionRecord | null = null
+let working = { on: false, since: 0 }
 
 const plan = (): ModelPlan => ({
   models,
@@ -138,7 +156,9 @@ async function askJev(
   prompt: string,
   wantTier: boolean,
   skillList: CommandInfo[],
-): Promise<JevAnswers | { error: string }> {
+): Promise<{ answers: JevAnswers; ms: number; tokens: number } | { error: string }> {
+  const started = await $.clock.now()
+  const body = JSON.stringify(buildRequest(prompt, { tier: wantTier, skills: skillList }))
   const stop = new AbortController()
   const timeout = $.clock.sleep(JEV_TIMEOUT_MS, { signal: stop.signal }).then(
     () => 'timeout' as const,
@@ -149,13 +169,16 @@ async function askJev(
       $.http.fetch(JEV_URL, {
         method: 'POST',
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildRequest(prompt, { tier: wantTier, skills: skillList })),
+        body,
       }),
       timeout,
     ])
     if (res === 'timeout') return { error: 'timed out' }
     if (!res.ok) return { error: `HTTP ${res.status}` }
-    return (JSON.parse(res.text) as { answers?: JevAnswers }).answers ?? { error: 'empty answer' }
+    const parsed = JSON.parse(res.text) as { answers?: JevAnswers; usage?: { input_tokens?: number } }
+    if (!parsed.answers) return { error: 'empty answer' }
+    const tokens = typeof parsed.usage?.input_tokens === 'number' ? parsed.usage.input_tokens : estimateTokens(body)
+    return { answers: parsed.answers, ms: (await $.clock.now()) - started, tokens }
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'request failed' }
   } finally {
@@ -163,14 +186,123 @@ async function askJev(
   }
 }
 
-async function readHistory($: EngineInterface): Promise<Decision[]> {
+async function readHistory($: EngineInterface): Promise<DecisionRecord[]> {
   const past = await $.store.get('history')
-  return Array.isArray(past) ? (past as Decision[]) : []
+  // Older versions kept the first 80 characters of each prompt; those are dropped.
+  return Array.isArray(past) ? (past as (DecisionRecord & { prompt?: string })[]).map(({ prompt: _, ...d }) => d) : []
 }
 
-async function record($: EngineInterface, decision: Decision) {
+async function configPath($: EngineInterface, file: string): Promise<string | undefined> {
+  const home = await $.env.get('HOME')
+  return home ? `${home}/${CONFIG_DIR}/${file}` : undefined
+}
+
+async function readFile($: EngineInterface, file: string): Promise<string | undefined> {
+  const path = await configPath($, file)
+  if (!path) return undefined
+  try {
+    const text = await $.fs.read(path)
+    return typeof text === 'string' ? text : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The shared files are a convenience: a failed write never gets in the way of routing. */
+async function writeFile($: EngineInterface, file: string, text: string) {
+  const path = await configPath($, file)
+  if (!path) return
+  try {
+    await $.fs.write(path, text)
+  } catch {}
+}
+
+async function ensureSessionId($: EngineInterface) {
+  if (sessionId) return sessionId
+  try {
+    sessionId = await $.session.id()
+  } catch {
+    sessionId = ''
+  }
+  return sessionId
+}
+
+/** Writes this session's choices to settings.json, keeping a pending nudge for another session. */
+async function writeShared($: EngineInterface) {
+  const current = parseSettings((await readFile($, SETTINGS_FILE)) ?? '')
+  const now = await $.clock.now()
+  const next: SharedSettings = {
+    version: 1,
+    mode: sharedMode(mode),
+    focus,
+    ...settings,
+    nudge: current?.nudge ?? null,
+    updatedAt: Math.max(now, (current?.updatedAt ?? 0) + 1),
+    updatedBy: 'plugin',
+  }
+  seenSettingsAt = next.updatedAt
+  await writeFile($, SETTINGS_FILE, formatSettings(next))
+}
+
+async function writeLast($: EngineInterface) {
+  const last: LastState = {
+    version: 1,
+    session: await ensureSessionId($),
+    working: working.on,
+    since: working.since,
+    mode: sharedMode(mode),
+    decision: lastDecision,
+    updatedAt: await $.clock.now(),
+  }
+  await writeFile($, LAST_FILE, JSON.stringify(last, null, 2) + '\n')
+}
+
+async function record($: EngineInterface, decision: DecisionRecord) {
   const history = await readHistory($)
   await $.store.set('history', [decision, ...history].slice(0, HISTORY))
+  lastDecision = decision
+  await writeFile($, DECISIONS_FILE, appendDecision((await readFile($, DECISIONS_FILE)) ?? '', decision))
+  await writeLast($)
+}
+
+/**
+ * Applies settings.json when it is newer than what this session last saw (the widget,
+ * the CLI or another session changed something), and a nudge addressed to this session.
+ * `nudgeOnly` is for turn.step, which runs on every request of a turn.
+ */
+async function applyShared($: EngineInterface, nudgeOnly = false) {
+  const shared = parseSettings((await readFile($, SETTINGS_FILE)) ?? '')
+  if (!shared) return
+  let changed = false
+  if (!nudgeOnly && shared.updatedAt > seenSettingsAt) {
+    seenSettingsAt = shared.updatedAt
+    if (shared.mode !== sharedMode(mode)) {
+      mode = shared.mode
+      active = undefined
+      await $.store.set('mode', mode)
+    }
+    if (shared.focus !== focus) {
+      focus = shared.focus
+      if (active) active.specialist = false
+      await $.store.set('focus', focus)
+    }
+    const next: Settings = { effort: shared.effort, skills: shared.skills, specialists: shared.specialists }
+    if (next.effort !== settings.effort || next.skills !== settings.skills || next.specialists !== settings.specialists) {
+      settings = next
+      await $.store.set('settings', settings)
+    }
+    changed = true
+  }
+  const n = shared.nudge
+  if (n && n.id !== seenNudge) {
+    seenNudge = n.id
+    await $.store.set('seenNudge', n.id)
+    if (n.target && n.target === (await ensureSessionId($))) {
+      await nudge($, n.by)
+      return
+    }
+  }
+  if (changed) await show($, { last: lastRoute() })
 }
 
 /** Pushes the session's choices to the bar and the status line. */
@@ -194,20 +326,26 @@ async function setFocus($: EngineInterface, next: Focus) {
   focus = next
   if (active) active.specialist = false // a held specialist no longer outranks the new focus
   await $.store.set('focus', next)
+  await writeShared($)
   await show($)
 }
 
 async function setMode($: EngineInterface, next: Mode) {
   mode = next
-  active = next === 'auto' || next === 'off' ? undefined : { tier: next, model: models[next], effort: TIER_EFFORT[next], at: await $.clock.now(), specialist: false }
+  active = next === 'auto' || next === 'shadow' || next === 'off' ? undefined : { tier: next, model: models[next], effort: TIER_EFFORT[next], at: await $.clock.now(), specialist: false }
   await $.store.set('mode', next)
-  await $.ui.status(next === 'off' ? undefined : next === 'auto' ? 'Jev: auto' : `Jev → ${label(models[next])} (pinned)`)
+  await $.ui.status(
+    next === 'off' ? undefined : next === 'auto' ? 'Jev: auto' : next === 'shadow' ? 'Jev: shadow (logging only)' : `Jev → ${label(models[next])} (pinned)`,
+  )
+  await writeShared($)
+  await writeLast($)
   await show($, { last: lastRoute() })
 }
 
 async function toggle($: EngineInterface, key: keyof Settings) {
   settings = { ...settings, [key]: !settings[key] }
   await $.store.set('settings', settings)
+  await writeShared($)
   await show($, { last: lastRoute() })
 }
 
@@ -216,8 +354,21 @@ async function nudge($: EngineInterface, by: -1 | 1) {
   const from = active?.tier ?? 'routine'
   const tier = TIERS[Math.max(0, Math.min(TIERS.length - 1, rank(from) + by))]!
   const c = choose(plan(), tier, { subject: active?.subject, focus })
-  active = { tier, model: c.model, effort: c.effort, at: await $.clock.now(), specialist: c.specialist, subject: active?.subject }
+  const now = await $.clock.now()
+  active = { tier, model: c.model, effort: c.effort, at: now, specialist: c.specialist, subject: active?.subject }
   await $.ui.status(`Jev → ${label(active.model)} (you)`)
+  await record($, {
+    at: now,
+    session: await ensureSessionId($),
+    tier,
+    model: active.model,
+    effort: settings.effort && c.effort ? c.effort : undefined,
+    subject: active.subject,
+    why: by > 0 ? 'nudged up' : 'nudged down',
+    manual: true,
+    shadow: mode === 'shadow' || undefined,
+    focus,
+  })
   await show($, { last: lastRoute(true) })
 }
 
@@ -241,6 +392,10 @@ export const register: Register = (on, options) => {
   mode = 'auto'
   active = undefined
   barHidden = options.focusBar === false
+  seenSettingsAt = 0
+  sessionId = ''
+  lastDecision = null
+  working = { on: false, since: 0 }
 
   on('session.start', async ($, e, next) => {
     const savedMode = await $.store.get('mode')
@@ -249,11 +404,14 @@ export const register: Register = (on, options) => {
     mode = isMode(savedMode) ? savedMode : 'auto'
     focus = isFocus(savedFocus) ? savedFocus : startFocus
     settings = { ...defaults, ...(savedSettings && typeof savedSettings === 'object' ? (savedSettings as Partial<Settings>) : {}) }
+    const savedNudge = await $.store.get('seenNudge')
+    seenNudge = typeof savedNudge === 'string' ? savedNudge : undefined
+    await applyShared($)
     await show($, { hidden: options.focusBar === false })
     await $.command.register({
       name: 'jev',
-      description: 'Jev router: status, auto, off, pin <tier>, reset, focus <0-4>, bar',
-      argumentHint: '[auto | off | pin <tier> | reset | focus <0-4|name> | bar | effort|skills|specialists on|off]',
+      description: 'Jev router: status, auto, shadow, off, pin <tier>, reset, focus <0-4>, bar',
+      argumentHint: '[auto | shadow | off | pin <tier> | reset | focus <0-4|name> | bar | effort|skills|specialists on|off]',
     })
     return next(e)
   })
@@ -261,30 +419,48 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     // A prompt with no stamped origin is treated as the person's own.
     const origin = e.origin?.kind ?? 'composer'
-    if (mode === 'off' || e.turnId || !ROUTED.has(origin) || e.text.trimStart().startsWith('/')) return next(e)
-
+    if (e.turnId || !ROUTED.has(origin)) return next(e)
+    if (e.text.trimStart().startsWith('/')) return next(e)
     const now = await $.clock.now()
+    working = { on: true, since: now }
+    await applyShared($)
+    if (mode === 'off') {
+      await writeLast($)
+      return next(e)
+    }
+
     if (active && now - active.at > IDLE_RESET_MS) active = undefined
 
-    const wantTier = mode === 'auto'
+    const shadow = mode === 'shadow'
+    const wantTier = mode === 'auto' || shadow
     const skillList = settings.skills ? await skills($) : []
-    let tier: Tier = mode === 'auto' ? (active?.tier ?? 'routine') : mode
-    let why = mode === 'auto' ? '' : 'pinned'
+    let tier: Tier = wantTier ? (active?.tier ?? 'routine') : (mode as Tier)
+    let why = wantTier ? '' : 'pinned'
     let subject: Subject | undefined
     let output: ReturnType<typeof decide>['output']
     let skill: { name: string; p: number } | undefined
+    let confidence: number | undefined
+    let latencyMs: number | undefined
+    let jevTokens: number | undefined
 
     if (wantTier || skillList.length) {
       const key = await apiKey($)
       if (!key) {
         await $.ui.status('Jev: no API key (run /jev)')
+        await writeLast($)
         return next(e)
       }
-      const answers = await askJev($, key.key, e.text, wantTier, skillList)
-      if ('error' in answers) {
-        await $.ui.status(`Jev: ${answers.error}; kept ${label(active?.model)}`)
+      const reply = await askJev($, key.key, e.text, wantTier, skillList)
+      if ('error' in reply) {
+        await $.ui.status(`Jev: ${reply.error}; kept ${label(active?.model)}`)
+        await writeLast($)
         return next(e)
       }
+      const answers = reply.answers
+      latencyMs = reply.ms
+      jevTokens = reply.tokens
+      const t = answers.tier
+      if (t) confidence = typeof t.confidence === 'number' ? t.confidence : t.probabilities[t.choice]
       const d = decide(answers, { held: active?.tier, focus })
       if (wantTier && d.tier) {
         tier = d.tier
@@ -306,11 +482,27 @@ export const register: Register = (on, options) => {
     }
     active = { tier, model, effort: c.effort, at: now, specialist, subject: subject ?? active?.subject }
     const effort = settings.effort && c.effort ? c.effort : undefined
-    await record($, { at: now, prompt: e.text.slice(0, 80), tier, model, effort, subject, why, skill: skill?.name })
-    await $.ui.status(`Jev → ${label(model)}${effort ? ` · ${effort}` : ''}${subject ? ` · ${subject}` : ''}${skill ? ` · /${skill.name}` : ''}`)
+    await record($, {
+      at: now,
+      session: await ensureSessionId($),
+      tier,
+      model,
+      effort,
+      subject,
+      skill: skill?.name,
+      why,
+      confidence,
+      latencyMs,
+      jevTokens,
+      jevCostUsd: jevTokens === undefined ? undefined : jevCost(jevTokens),
+      shadow: shadow || undefined,
+      focus,
+    })
+    const summary = `${label(model)}${effort ? ` · ${effort}` : ''}${subject ? ` · ${subject}` : ''}${skill ? ` · /${skill.name}` : ''}`
+    await $.ui.status(shadow ? `Jev (shadow) would pick ${summary}` : `Jev → ${summary}`)
     await show($, { last: { ...lastRoute()!, skill: skill?.name } })
 
-    if (!skill) return next(e)
+    if (!skill || shadow) return next(e)
     const hint =
       `[jev-router] Jev judged the "${skill.name}" skill relevant to this request (p=${skill.p.toFixed(2)}). ` +
       'If it fits, invoke it with the Skill tool before starting; otherwise ignore this note.'
@@ -320,7 +512,10 @@ export const register: Register = (on, options) => {
   // Every main-loop request of the turn goes to the chosen model; subagents keep
   // the model their own definition gives them.
   on('turn.step', async function* ($, e, next) {
-    if (e.agentId || mode === 'off' || !active) return yield* next(e)
+    if (e.agentId) return yield* next(e)
+    // A nudge from the widget lands on the next request, mid-turn included.
+    await applyShared($, true)
+    if (mode === 'off' || mode === 'shadow' || !active) return yield* next(e)
     const { effort, ...rest } = e
     // Haiku takes no effort setting, so the session's (resolved for its own model) is
     // left off; otherwise the routed effort when effort routing is on, else the session's.
@@ -331,7 +526,11 @@ export const register: Register = (on, options) => {
 
   // A long turn counts as activity, so the idle reset runs from when work stopped.
   on('turn.complete', async ($, e, next) => {
-    if (active) active.at = await $.clock.now()
+    if (e.agentId) return next(e)
+    const now = await $.clock.now()
+    if (active) active.at = now
+    working = { on: false, since: now }
+    await writeLast($)
     return next(e)
   })
 
@@ -342,7 +541,9 @@ export const register: Register = (on, options) => {
     const f = (isFocus(s.focus) ? s.focus : DEFAULT_FOCUS) as Focus
     const routeText = s.mode === 'off'
       ? 'off'
-      : s.last
+      : s.last && s.mode === 'shadow'
+        ? `shadow: would pick ${label(s.last.model)}`
+        : s.last
         ? `${label(s.last.model)}${s.last.effort ? ` · ${s.last.effort}` : ''}${s.last.subject ? ` · ${s.last.subject}` : ''}${s.last.manual ? ' (you)' : ''}`
         : 'waiting for a prompt'
 
@@ -366,7 +567,12 @@ export const register: Register = (on, options) => {
           <Text dimColor> Task focused  ({FOCUS_LABELS[f]})</Text>
         </Box>
         <Box>
-          <Button key="toggle-router" label={`Router ${onOff(s.mode !== 'off')}`} dimColor={s.mode === 'off'} onPress={() => setMode($, mode === 'off' ? 'auto' : 'off')} />
+          <Button
+            key="toggle-router"
+            label={`Router ${s.mode === 'off' ? 'off' : s.mode === 'shadow' ? 'shadow' : 'on'}`}
+            dimColor={s.mode === 'off'}
+            onPress={() => setMode($, mode === 'off' ? 'auto' : mode === 'shadow' ? 'off' : 'shadow')}
+          />
           <Button key="toggle-effort" label={`Effort ${onOff(s.settings.effort)}`} dimColor={!s.settings.effort} onPress={() => toggle($, 'effort')} />
           <Button key="toggle-skills" label={`Skills ${onOff(s.settings.skills)}`} dimColor={!s.settings.skills} onPress={() => toggle($, 'skills')} />
           <Button key="toggle-specialists" label={`Specialists ${onOff(s.settings.specialists)}`} dimColor={!s.settings.specialists} onPress={() => toggle($, 'specialists')} />
@@ -385,9 +591,16 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'jev' }, async ($, e) => {
     const [verb = '', arg = ''] = e.args.trim().toLowerCase().split(/\s+/)
 
-    if (verb === 'auto' || verb === 'off') {
+    if (verb === 'auto' || verb === 'off' || verb === 'shadow') {
       await setMode($, verb)
-      return { text: verb === 'off' ? 'Jev router off: the session model handles every turn.' : 'Jev router on: each prompt picks its own model.' }
+      return {
+        text:
+          verb === 'off'
+            ? 'Jev router off: the session model handles every turn.'
+            : verb === 'shadow'
+              ? 'Jev router in shadow mode: Jev judges and logs each prompt, but the session model handles it and no skill is hinted.'
+              : 'Jev router on: each prompt picks its own model.',
+      }
     }
     if (verb === 'pin') {
       if (!TIERS.includes(arg as Tier)) return { text: `Pin one of: ${TIERS.join(', ')}.` }
@@ -422,7 +635,7 @@ export const register: Register = (on, options) => {
     const history = await readHistory($)
     const onOff = (b: boolean) => (b ? 'on' : 'off')
     const lines = [
-      `Jev router: ${mode === 'auto' || mode === 'off' ? mode : `pinned to ${mode}`}  ·  focus ${FOCUS_LABELS[focus]} (${focus})`,
+      `Jev router: ${mode === 'auto' || mode === 'off' || mode === 'shadow' ? mode : `pinned to ${mode}`}  ·  focus ${FOCUS_LABELS[focus]} (${focus})`,
       `Tiers: ${TIERS.map(t => `${t} → ${label(models[t])}`).join(', ')}`,
       `Specialists: ${onOff(settings.specialists)}${settings.specialists ? ' (hard science and math → Fable 5.1 at balanced focus and above)' : ''}`,
       `Effort routing: ${onOff(settings.effort)}  ·  Skill hints: ${settings.skills ? `on (${catalog?.skills.length ?? '?'} skills)` : 'off'}`,
@@ -436,10 +649,11 @@ export const register: Register = (on, options) => {
       for (const d of history.slice(0, 10)) {
         const time = new Date(d.at).toTimeString().slice(0, 5)
         const effort = d.effort ? ` ${d.effort}` : ''
-        lines.push(`  ${time}  ${(label(d.model) + effort).padEnd(16)} ${d.skill ? `/${d.skill}  ` : ''}"${d.prompt}"  ${d.why}`)
+        const flags = `${d.shadow ? ' (shadow)' : ''}${d.manual ? ' (you)' : ''}`
+        lines.push(`  ${time}  ${(label(d.model) + effort).padEnd(16)} ${d.skill ? `/${d.skill}  ` : ''}${d.why}${flags}`)
       }
     }
-    lines.push('', 'Commands: /jev auto | off | pin <tier> | reset | focus <0-4> | bar | effort|skills|specialists on|off')
+    lines.push('', 'Commands: /jev auto | shadow | off | pin <tier> | reset | focus <0-4> | bar | effort|skills|specialists on|off')
     return { text: lines.join('\n') }
   })
 }

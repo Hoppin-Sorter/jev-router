@@ -1,0 +1,6 @@
+{"at": 1787220000000.0, "session": "sess-a", "tier": "complex", "model": "claude-opus-5-5", "why": "Jev said complex", "jevTokens": 300, "jevCostUsd": 1.26e-05, "focus": 2}
+{"at": 1789639200000.0, "session": "sess-a", "tier": "complex", "model": "claude-opus-5-5", "why": "Jev said complex", "jevTokens": 300, "jevCostUsd": 1.26e-05, "focus": 2, "confidence": 0.71, "latencyMs": 640}
+{"at": 1791108000000.0, "session": "sess-a", "tier": "routine", "model": "claude-sonnet-5-5", "why": "Jev said routine", "jevTokens": 300, "jevCostUsd": 1.26e-05, "focus": 2, "effort": "medium"}
+garbage line
+{"at": 1791367170000.0, "session": "sess-a", "tier": "mechanical", "model": "claude-haiku-4-5-20251001", "why": "Jev said mechanical", "jevTokens": 300, "jevCostUsd": 1.26e-05, "focus": 2, "confidence": 0.93, "latencyMs": 410, "skill": "data:sql-queries"}
+{"at": 1791386940000.0, "session": "sess-a", "tier": "deep", "model": "claude-fable-5-1", "why": "Jev said deep", "jevTokens": 300, "jevCostUsd": 1.26e-05, "focus": 2, "subject": "science", "shadow": true}

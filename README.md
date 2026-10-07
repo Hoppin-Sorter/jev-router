@@ -26,10 +26,11 @@ you: weekly signups by country in BigQuery    →  Sonnet 5.5 + hint: data:sql-q
 | **Your own app on the OpenAI API** | the [router library](#use-with-openai-models-and-chatgpt) with `provider: "openai"` | Yes |
 | **Codex CLI** (ChatGPT sign-in or API key) | [`jev_router.py --run codex`](#codex-cli) | For each run you launch with it. Codex has no way yet to switch models by itself mid-session |
 | **The ChatGPT app / chatgpt.com** | not supported | No. The app has no hook for outside code to choose its model |
+| **A Mac, to watch and steer it** | the [menu bar widget](#menu-bar-widget-macos) (optional) | Works alongside the plugin |
 
 Everything needs your own Jev key, so start with [Your API key](#your-api-key-bring-your-own).
 
-> **Early access.** The plugin uses Claude Code's function-hooks plugin API, which can change between releases. Built and tested on Claude Code 2.1.289. The OpenAI model names and settings come from OpenAI's docs as of October 2026; the Codex launcher has not been run against a real Codex install yet.
+> **Early access.** The plugin uses Claude Code's function-hooks plugin API, which can change between releases. Built and tested on Claude Code 2.1.293. The OpenAI model names and settings come from OpenAI's docs as of October 2026; the Codex launcher has not been run against a real Codex install yet.
 
 ## Install the Claude Code plugin
 
@@ -101,16 +102,53 @@ Focus  Token efficient ○ ○ ● ○ ○ Task focused  (Balanced)
 ```
 
 - **Focus dots** set the quality/cost trade-off. Your choice is remembered across sessions.
-- **Router / Effort / Skills / Specialists** turn each feature on or off.
+- **Router** steps through on → shadow → off. **Effort / Skills / Specialists** turn each feature on or off.
 - **Model − / +** moves this task's model down or up one tier right away, mid-turn included. Routing picks up again with the next task.
 - **Hide** removes the bar; `/jev bar` brings it back. Set `focusBar` to `false` to start with it hidden.
+
+**Shadow mode** asks Jev and logs what it would pick, but leaves the session's model alone and hints no skill. Use it to see how routing would behave before you let it switch anything. It still costs one Jev call per prompt.
+
+## Menu bar widget (macOS)
+
+`widget/` is an optional menu bar app, **Jev Bar**, for macOS 14 or later. It shows what the router is doing and lets you steer it without typing commands.
+
+- **Menu bar:** an icon and the model family, like `⑂ Sonnet`. The icon is an eye in shadow mode and a pause sign when the router is off.
+- **Off / Shadow / On** at the top of the panel.
+- **Now:** the latest pick (model, tier, subject, effort, skill), Jev's confidence and latency, and whether that session is working or idle and for how long. **− / +** move that session's model down or up one tier on its next request.
+- **Focus:** the same 5-step slider as the control bar, from Token efficient to Task focused, plus the Effort, Skills and Specialists switches.
+- **Saved:** for Today, 7 days or 30 days, what your Claude Code requests were worth at API list prices, against the same tokens all on Opus 5.5, minus what Jev cost, with a bar showing the model mix. These are list-price values; a Pro or Max plan bills differently.
+- **Recent:** the last five decisions. Never your prompt text.
+- **⋯ menu:** **Customize** shows or hides each card. **Pop out** opens a small floating pill (model, focus, today's savings) that stays on top on every Space; drag it anywhere.
+
+Build and install it (needs Xcode or the Command Line Tools, Swift 5.9+):
+
+```bash
+cd widget
+swift run JevCoreChecks          # checks the pricing, settings and transcript logic
+scripts/bundle.sh --install      # builds "Jev Bar.app", signs it ad hoc, copies it to ~/Applications and opens it
+```
+
+The app is signed ad hoc, not notarized. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. To start it at login, add it under System Settings → General → Login Items.
+
+### How the widget and the plugin talk
+
+Through three small files in `~/.config/jev/`. There's no server and nothing leaves your Mac.
+
+| File | Written by | Holds |
+|---|---|---|
+| `settings.json` | both | mode (`auto`, `shadow` or `off`), focus 0–4, the effort/skills/specialists switches, a one-shot `nudge` for one session, and `updatedAt`. The newer write wins, so the control bar, `/jev` and the widget stay in sync. |
+| `last.json` | plugin | the latest decision, the session it came from, and whether that session is working |
+| `decisions.jsonl` | plugin | one decision per line, newest last, trimmed to about 500 lines. Model, tier, subject, skill, confidence, latency and Jev cost. **No prompt text.** |
+
+The **Saved** card reads token usage from Claude Code's own transcripts in `~/.claude/projects/` (each request counted once) and caches what it has read, so only changed files are read again. Prices per million tokens (input / output / cache read), from Anthropic's pricing page in October 2026: Haiku 4.5 $1 / $5 / $0.10, Sonnet 5.5 $2 / $10 / $0.20, Opus 5.5 $4 / $20 / $0.20, Fable 5.1 $10 / $50 / $0.25, Opus 5 $5 / $25 / $0.50, Fable 5 $10 / $50 / $1.00. Cache writes cost 1.25× input (5-minute) or 2× (1-hour). Jev is $0.042 per million input tokens. Requests on other models are left out and counted separately.
 
 ## Commands
 
 | Command | Does |
 |---|---|
-| `/jev` | Status, key check, and the last 10 decisions |
+| `/jev` | Status, key check, and the last 10 decisions (model, tier and reason; prompts aren't stored) |
 | `/jev auto` / `/jev off` | Turn routing on / off |
+| `/jev shadow` | Ask Jev and log its pick, but don't switch the model or hint a skill |
 | `/jev pin <tier>` | Force one tier (skill hints keep running) |
 | `/jev reset` | Forget the held tier; judge the next prompt fresh |
 | `/jev focus <0-4 or name>` | Set focus: token-efficient, lean, balanced, thorough, task-focused |
@@ -270,7 +308,7 @@ python3 lib/jev_router.py --run codex-exec "fix the failing test in auth.spec.ts
 python3 lib/jev_router.py --run codex "fix the failing test in auth.spec.ts"
 ```
 
-`--run` runs `codex exec -m <model> -c model_reasoning_effort="<effort>" "<prompt>"` for you (plain `codex` for the interactive form). Add `--focus` (0–4 or a name) to trade quality against cost, and `--skills-dir DIR` (repeatable; default `~/.codex/skills`) to let Jev pick from your skills; a pick becomes a one-line suggestion at the top of the prompt. Each run is independent, so there is no tier holding between runs.
+`--run` runs `codex exec -m <model> -c model_reasoning_effort="<effort>" "<prompt>"` for you (plain `codex` for the interactive form). Add `--focus` (0–4 or a name) to trade quality against cost (without it, the focus saved in `~/.config/jev/settings.json` by the plugin or the widget is used, else balanced), and `--skills-dir DIR` (repeatable; default `~/.codex/skills`) to let Jev pick from your skills; a pick becomes a one-line suggestion at the top of the prompt. Each run is independent, so there is no tier holding between runs.
 
 - **Why per run, not automatic?** Codex doesn't let a plugin or hook change the model between turns. [A request for that](https://github.com/openai/codex/issues/45904) is open. Until it ships, the launcher is the way to get routing. Inside an interactive Codex session you can still follow Jev's suggestion by hand with `/model`.
 - Add a shell alias if you like: `alias cx='python3 /path/to/jev_router.py --run codex'`.
@@ -285,7 +323,9 @@ Jev is billed per input token on your TypeSafe account. Check [current pricing](
 
 ## What gets sent to TypeSafe
 
-Per prompt, to `https://api.typesafe.ai/v1/systemone`: the first 6,000 characters of your message, and the name plus first 200 characters of the description of each installed skill or command. Nothing else (no files, no conversation history). Your prompt also goes to Anthropic or OpenAI as it normally would, whichever model you use. If sending prompts to TypeSafe isn't acceptable for a project, run `/jev off` (plugin) or don't call the router.
+Per prompt, to `https://api.typesafe.ai/v1/systemone`: the first 6,000 characters of your message, and the name plus first 200 characters of the description of each installed skill or command. Nothing else (no files, no conversation history). Your prompt also goes to Anthropic or OpenAI as it normally would, whichever model you use. If sending prompts to TypeSafe isn't acceptable for a project, run `/jev off` (plugin) or don't call the router. Shadow mode still sends them.
+
+Nothing on disk keeps your prompts: the plugin's own history and the files in `~/.config/jev/` hold the decision only (model, tier, subject, skill, reason, timing). Versions before 0.6 kept the first 80 characters of each prompt in the plugin's history; 0.6 drops them when it reads that history and stops writing them.
 
 ## Limits
 
@@ -298,12 +338,13 @@ Per prompt, to `https://api.typesafe.ai/v1/systemone`: the first 6,000 character
 ```bash
 claude plugin validate .                      # plugin manifest + hooks
 claude plugin test .                          # plugin tests (tests/router.test.ts)
-node --test tests/jev-router.spec.ts          # TypeScript router
-python3 -m unittest discover -s tests         # Python router, Codex launcher, eval harness, TS/Python parity
+node --test tests/jev-router.spec.ts tests/contract.spec.ts   # TypeScript router, ~/.config/jev contract
+python3 -m unittest discover -s tests         # Python router, Codex launcher, eval harness, TS/Python parity, widget fixtures
+(cd widget && swift run JevCoreChecks)        # widget logic, on a Mac (or any machine with Swift)
 claude --plugin-dir .                         # load the plugin for one session
 ```
 
-The rubric, thresholds and decision logic live in `lib/jev-router.ts`; the plugin imports them, and `lib/jev_router.py` mirrors them. Change both together.
+The rubric, thresholds and decision logic live in `lib/jev-router.ts`; the plugin imports them, and `lib/jev_router.py` mirrors them. Change both together. The same goes for `lib/contract.ts` and `widget/Sources/JevCore/Contract.swift`, the two sides of the `~/.config/jev/` files. `widget/Fixtures/expected.json` holds hand-worked savings numbers that both the Swift checks and `tests/test_widget_fixtures.py` verify.
 
 ## Credits
 

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "session": "sess-a",
+  "working": true,
+  "since": 1791386940000.0,
+  "mode": "shadow",
+  "decision": {
+    "at": 1791386940000.0,
+    "session": "sess-a",
+    "tier": "deep",
+    "model": "claude-fable-5-1",
+    "why": "Jev said deep",
+    "jevTokens": 300,
+    "jevCostUsd": 1.26e-05,
+    "focus": 2,
+    "subject": "science",
+    "shadow": true
+  },
+  "updatedAt": 1791386941000.0
+}

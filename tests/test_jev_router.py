@@ -1,4 +1,5 @@
 """Tests for the standalone Python router (lib/jev_router.py): python3 -m unittest discover tests"""
+import contextlib
 import json
 import os
 import sys
@@ -119,12 +120,50 @@ class CliTest(unittest.TestCase):
             self.assertEqual(jev_router.load_api_key({"JEV_API_KEY": "j", "TYPESAFE_API_KEY": "t"}, home), "t")
             self.assertIsNone(jev_router.load_api_key({}, os.path.join(home, "nowhere")))
 
+    def test_focus_comes_from_shared_settings_when_not_given(self):
+        with tempfile.TemporaryDirectory() as home:
+            self.assertIsNone(jev_router.shared_focus(home))
+            os.makedirs(os.path.join(home, ".config", "jev"))
+            path = os.path.join(home, ".config", "jev", "settings.json")
+            for text, want in (("{bad", None), ('{"focus": true}', None), ('{"focus": 7}', None), ('{"mode": "auto", "focus": 0}', 0)):
+                with open(path, "w") as f:
+                    f.write(text)
+                self.assertEqual(jev_router.shared_focus(home), want)
+
+            seen = []
+            original_router, original_home = jev_router.Router, os.environ.get("HOME")
+
+            class Recording(original_router):
+                def __init__(self, *a, **kw):
+                    super().__init__(*a, **kw)
+                    seen.append(self.focus)
+
+                def _post(self, body):
+                    return answers({"routine": 0.9, "complex": 0.1}, 0.0)
+
+            jev_router.Router = Recording
+            os.environ["HOME"] = home
+            os.environ["TYPESAFE_API_KEY"] = "k"
+            try:
+                with open(os.devnull, "w") as out, contextlib.redirect_stdout(out):
+                    jev_router.main(["--skills-dir", "/nowhere", "fix", "it"])
+                    jev_router.main(["--focus", "thorough", "--skills-dir", "/nowhere", "fix", "it"])
+            finally:
+                jev_router.Router = original_router
+                os.environ.pop("TYPESAFE_API_KEY", None)
+                if original_home is None:
+                    os.environ.pop("HOME", None)
+                else:
+                    os.environ["HOME"] = original_home
+            self.assertEqual(seen, [0, 3])
+
     def test_run_launches_codex_with_the_routed_model(self):
         launched = []
         original = jev_router.Router._post
         jev_router.Router._post = lambda self, body: answers({"routine": 0.9, "complex": 0.1}, 0.0)
         old = dict(os.environ)
         os.environ["TYPESAFE_API_KEY"] = "k"
+        os.environ["HOME"] = tempfile.gettempdir()  # no saved focus: balanced
         try:
             code = jev_router.main(["--run", "codex-exec", "--skills-dir", "/nowhere", "fix", "the", "bug"], runner=launched.append)
         finally:

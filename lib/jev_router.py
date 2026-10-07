@@ -347,6 +347,17 @@ class Router:
 # ---- command line -------------------------------------------------------------------------
 
 
+def shared_focus(home: Optional[str] = None) -> Optional[int]:
+    """The focus the menu bar widget or the plugin last saved in ~/.config/jev/settings.json, if any."""
+    path = os.path.join(home or os.path.expanduser("~"), ".config", "jev", "settings.json")
+    try:
+        with open(path) as f:
+            focus = json.load(f).get("focus")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return focus if isinstance(focus, int) and not isinstance(focus, bool) and focus in FOCUS_LABELS else None
+
+
 def load_api_key(env: Optional[Mapping[str, str]] = None, home: Optional[str] = None) -> Optional[str]:
     """TYPESAFE_API_KEY, then JEV_API_KEY, then ~/.config/jev/api_key (the plugin reads the same places)."""
     env = os.environ if env is None else env
@@ -408,14 +419,18 @@ def main(argv: Optional[list] = None, *, runner=None) -> int:
     )
     ap.add_argument("prompt", nargs="*", help="the prompt (reads stdin when omitted)")
     ap.add_argument("--provider", choices=sorted(PRESETS), default="openai", help="whose models to pick from (default: openai)")
-    ap.add_argument("--focus", default="balanced", help="0-4 or token-efficient | lean | balanced | thorough | task-focused (default: balanced)")
+    ap.add_argument("--focus", default=None, help="0-4 or token-efficient | lean | balanced | thorough | task-focused (default: the focus saved in ~/.config/jev/settings.json, else balanced)")
     ap.add_argument("--skills-dir", action="append", default=None, metavar="DIR", help="folder of <name>/SKILL.md skills for Jev to pick from (repeatable; default ~/.codex/skills)")
     ap.add_argument("--run", choices=["codex", "codex-exec"], help="launch Codex with the chosen model and effort instead of printing")
     args = ap.parse_args(argv)
-    try:
-        focus = parse_focus(args.focus)
-    except ValueError as err:
-        ap.error(str(err))
+    if args.focus is None:
+        saved = shared_focus()
+        focus = DEFAULT_FOCUS if saved is None else saved
+    else:
+        try:
+            focus = parse_focus(args.focus)
+        except ValueError as err:
+            ap.error(str(err))
 
     prompt = " ".join(args.prompt).strip() or (sys.stdin.read().strip() if not sys.stdin.isatty() else "")
     if not prompt:

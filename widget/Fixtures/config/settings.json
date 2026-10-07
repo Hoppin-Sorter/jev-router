@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "mode": "shadow",
+  "focus": 3,
+  "effort": true,
+  "skills": false,
+  "specialists": true,
+  "nudge": {
+    "target": "sess-a",
+    "by": -1,
+    "id": "n-1"
+  },
+  "updatedAt": 1791400000000,
+  "updatedBy": "plugin"
+}

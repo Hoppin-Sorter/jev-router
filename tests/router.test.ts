@@ -17,13 +17,24 @@ const top = (probabilities: Record<string, number>) =>
 // The world beneath the plugin: a key, a skill list, a Jev that answers `reply`,
 // and bottoms for prompt.submit and turn.step that record what reached them.
 function world(on: On, reply: { current: Reply }, env: Record<string, string> = { TYPESAFE_API_KEY: 'test-key' }) {
-  mock.env(on, env)
+  mock.env(on, { HOME: '/home/t', ...env })
   mock.store(on)
   const clock = mock.clock(on, { now: 1_000_000 })
   const requests: { questions: Record<string, unknown> }[] = []
   const steps: TurnStepInput[] = []
+  // ~/.config/jev/ in memory; no api_key file, so the key comes from env.
+  const files = new Map<string, string>()
 
-  on('fs.read', async () => ({ deny: 'missing' }))
+  on('fs.read', async ($, e) => {
+    const text = files.get(e.path)
+    return text === undefined ? { deny: 'missing' } : { value: text }
+  })
+  on('fs.write', async ($, e) => {
+    files.set(e.path, e.text)
+    return { value: undefined }
+  })
+  on('session.id', async () => ({ value: 'sess-a' }))
+  on('turn.complete', async ($, e) => ({ text: e.answer }))
   const commands: CommandInfo[] = [
     { name: 'data:sql-queries', description: 'Write correct, performant SQL across warehouse dialects.', source: 'plugin' },
     { name: 'pdf-viewer:open', description: 'Open a PDF in the interactive viewer.', source: 'plugin' },
@@ -47,8 +58,10 @@ function world(on: On, reply: { current: Reply }, env: Record<string, string> = 
     steps.push(e)
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' as const, usage: null }
   })
-  return { clock, requests, steps }
+  return { clock, requests, steps, files }
 }
+
+const JEV = '/home/t/.config/jev'
 
 const submit = ($: Engine, text: string, kind: 'composer' | 'scheduled-trigger' | 'task-notification' = 'composer') =>
   $.prompt.submit({ text, wait: false, origin: { kind } })
@@ -215,4 +228,92 @@ test('/jev focus sets the level by name', async ($, on) => {
   await submit($, 'derive the transition state energy for this SN2 reaction')
   await step($)
   expect(w.steps[1]?.model).toBe('claude-fable-5-1')
+})
+
+test('shadow mode decides and logs but switches nothing and hints no skill', async ($, on) => {
+  const reply = { current: { tier: { mechanical: 0.95, routine: 0.05 }, risky: 0, skill: { none: 0.1, 'data:sql-queries': 0.9 } } }
+  const w = world(on, reply)
+  on('session.start', async ($, e) => ({ cwd: e.cwd }))
+  on('command.register', async ($, e) => ({ value: { command: e.name } }))
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const out = await $.command.run({ command: 'jev', args: 'shadow', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  expect(out.text).toContain('shadow')
+  expect(JSON.parse(w.files.get(`${JEV}/settings.json`)!).mode).toBe('shadow')
+
+  const entered = await submit($, 'count signups by country, secret project NEPTUNE')
+  expect(entered.context).toBeUndefined()
+  expect(w.requests.length).toBe(1)
+  await step($)
+  expect(w.steps[0]?.model).toBe('claude-opus-5-5')
+
+  const log = w.files.get(`${JEV}/decisions.jsonl`)!.trim().split('\n').map(l => JSON.parse(l))
+  expect(log.length).toBe(1)
+  expect(log[0].shadow).toBe(true)
+  expect(log[0].model).toBe('claude-haiku-4-5-20251001')
+  expect(log[0].skill).toBe('data:sql-queries')
+  expect(log[0].session).toBe('sess-a')
+  expect(typeof log[0].jevCostUsd).toBe('number')
+  const last = JSON.parse(w.files.get(`${JEV}/last.json`)!)
+  expect(last.working).toBe(true)
+  expect(last.mode).toBe('shadow')
+  expect(last.decision.tier).toBe('mechanical')
+
+  // No prompt text anywhere: not in the shared files, not in /jev's history.
+  for (const text of w.files.values()) expect(text.includes('NEPTUNE')).toBe(false)
+  const status = await $.command.run({ command: 'jev', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  expect((status.text ?? '').includes('NEPTUNE')).toBe(false)
+  expect(status.text).toContain('(shadow)')
+
+  await $.turn.complete({ answer: '', durationMs: 10, isAborted: false, turnId: 't', reason: 'answer' })
+  expect(JSON.parse(w.files.get(`${JEV}/last.json`)!).working).toBe(false)
+})
+
+test("the widget's settings apply on the next prompt, and its nudge only in the session it targets", async ($, on) => {
+  const reply: { current: Reply } = { current: { tier: { routine: 0.9, complex: 0.1 }, risky: 0, skill: { none: 1 } } }
+  const w = world(on, reply)
+  const widget = (patch: object) =>
+    w.files.set(
+      `${JEV}/settings.json`,
+      JSON.stringify({ version: 1, mode: 'auto', focus: 2, effort: false, skills: true, specialists: true, nudge: null, updatedAt: 2_000_000, updatedBy: 'widget', ...patch }),
+    )
+
+  widget({ mode: 'off' })
+  await submit($, 'add a dark mode toggle')
+  expect(w.requests.length).toBe(0)
+
+  widget({ mode: 'auto', effort: true, updatedAt: 2_000_001 })
+  await submit($, 'add a dark mode toggle')
+  await step($)
+  expect(w.steps[0]?.model).toBe('claude-sonnet-5-5')
+  expect(w.steps[0]?.effort).toBe('medium')
+
+  // A nudge for another session is ignored; one for this session moves the model mid-turn.
+  widget({ effort: true, updatedAt: 2_000_001, nudge: { target: 'sess-b', by: 1, id: 'n1' } })
+  await step($)
+  expect(w.steps[1]?.model).toBe('claude-sonnet-5-5')
+  widget({ effort: true, updatedAt: 2_000_001, nudge: { target: 'sess-a', by: 1, id: 'n2' } })
+  await step($)
+  expect(w.steps[2]?.model).toBe('claude-opus-5-5')
+  await step($) // the same nudge is applied once
+  expect(w.steps[3]?.model).toBe('claude-opus-5-5')
+  const log = w.files.get(`${JEV}/decisions.jsonl`)!.trim().split('\n').map(l => JSON.parse(l))
+  expect(log.at(-1).manual).toBe(true)
+})
+
+test('the bar writes its changes to settings.json, keeping a pending nudge', async ($, on) => {
+  const reply: { current: Reply } = { current: science }
+  const w = world(on, reply)
+  w.files.set(`${JEV}/settings.json`, JSON.stringify({ mode: 'auto', focus: 2, nudge: { target: 'sess-b', by: -1, id: 'n9' }, updatedAt: 5 }))
+  const bar = await $.ui.mount({ plugin: 'jev-router', surface: 'terminal', ...BAR })
+  await bar.press({ key: 'expand' })
+  await bar.press({ key: 'focus-4' })
+  await bar.press({ key: 'toggle-specialists' })
+  await bar.press({ key: 'toggle-router' })
+  const saved = JSON.parse(w.files.get(`${JEV}/settings.json`)!)
+  expect(saved.focus).toBe(4)
+  expect(saved.specialists).toBe(false)
+  expect(saved.mode).toBe('shadow')
+  expect(saved.updatedBy).toBe('plugin')
+  expect(saved.nudge.id).toBe('n9')
+  await bar.unmount()
 })

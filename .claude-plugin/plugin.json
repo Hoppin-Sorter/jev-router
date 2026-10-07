@@ -1,6 +1,6 @@
 {
   "name": "jev-router",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Asks Jev before each prompt what the task is and how hard it is, then picks the Claude model (and optionally effort) and the skill that fit. A control bar sets the quality/cost focus.",
   "author": {
     "name": "Ethan Hoppin",

@@ -7,3 +7,8 @@ node_modules/
 api_key
 *.key
 .env
+
+# widget build output and Python caches
+widget/.build/
+widget/build/
+__pycache__/
