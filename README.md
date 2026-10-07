@@ -59,7 +59,8 @@ Without a key the plugin does nothing and your model is left alone.
 - **No mid-task downgrades.** Within an active stretch the tier only goes up, so "yes, go ahead" stays on the model that planned the work and the prompt cache stays warm. It resets after 10 idle minutes or `/jev reset`.
 - **Effort (optional).** With `effortRouting` on, reasoning effort follows the tier too: routine → medium, complex → high, deep → xhigh. Off by default, which keeps your session's effort.
 - **Skills** are chosen from your installed skills and commands, with `none` as an option. A hint is added only at 50%+ confidence.
-- **Not routed:** slash commands, notifications, and subagents (they keep their own model).
+- **Routed:** prompts you type, prompts from the Agent SDK, and the prompts scheduled routines fire.
+- **Not routed:** slash commands, background notifications, and subagents (they keep their own model).
 
 ## Commands
 

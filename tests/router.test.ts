@@ -46,7 +46,8 @@ function world(on: On, reply: { current: Reply }, env: Record<string, string> = 
   return { clock, requests, steps }
 }
 
-const submit = ($: Engine, text: string) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+const submit = ($: Engine, text: string, kind: 'composer' | 'scheduled-trigger' | 'task-notification' = 'composer') =>
+  $.prompt.submit({ text, wait: false, origin: { kind } })
 
 async function step($: Engine, model = 'claude-opus-5-5') {
   const stream = $.turn.step({ turnId: 't', index: 0, model, effort: 'xhigh', messageCount: 1 })
@@ -126,4 +127,15 @@ test('with effort routing on, effort follows the tier', { options: { effortRouti
   await submit($, 'design the sharding strategy for our event store')
   await step($, 'claude-opus-5-5')
   expect(w.steps[2]?.effort).toBe('xhigh')
+})
+
+test("a routine's scheduled prompt is routed; a background notification is not", async ($, on) => {
+  const reply = { current: { tier: { mechanical: 0.95, routine: 0.05 }, risky: 0, skill: { none: 1 } } }
+  const w = world(on, reply)
+  await submit($, 'background task finished', 'task-notification')
+  expect(w.requests.length).toBe(0)
+  await submit($, 'pull the latest commits and summarize them', 'scheduled-trigger')
+  expect(w.requests.length).toBe(1)
+  await step($)
+  expect(w.steps[0]?.model).toBe('claude-haiku-4-5-20251001')
 })

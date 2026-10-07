@@ -36,9 +36,9 @@ const JEV_TIMEOUT_MS = 3_000
 const CATALOG_TTL_MS = 5 * 60_000
 const HISTORY = 20
 
-// A person's prompt (or a host's) is routed; notifications, peers and the loop's
-// own continuations ride the tier already chosen.
-const ROUTED = new Set(['composer', 'bridge', 'sdk', 'unclassified', 'slack-ping', 'plugin'])
+// A person's prompt, a host's, or a routine's scheduled prompt is routed;
+// notifications, peers and the loop's own continuations ride the tier already chosen.
+const ROUTED = new Set(['composer', 'bridge', 'sdk', 'unclassified', 'slack-ping', 'plugin', 'scheduled-trigger'])
 
 const LABELS: Record<string, string> = {
   'claude-haiku-4-5-20251001': 'Haiku 4.5',
