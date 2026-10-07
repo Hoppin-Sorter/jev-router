@@ -7,6 +7,8 @@ type Reply = {
   tier?: Record<string, number>
   risky?: number
   skill?: Record<string, number>
+  subject?: Record<string, number>
+  output?: Record<string, number>
 }
 
 const top = (probabilities: Record<string, number>) =>
@@ -35,6 +37,8 @@ function world(on: On, reply: { current: Reply }, env: Record<string, string> = 
     if (r.tier) answers.tier = { type: 'choice', choice: top(r.tier), probabilities: r.tier, confidence: 0.8 }
     if (r.risky !== undefined) answers.risky = { type: 'noul', noul: r.risky }
     if (r.skill) answers.skill = { type: 'choice', choice: top(r.skill), probabilities: r.skill, confidence: 0.8 }
+    if (r.subject) answers.subject = { type: 'choice', choice: top(r.subject), probabilities: r.subject, confidence: 0.9 }
+    if (r.output) answers.output = { type: 'choice', choice: top(r.output), probabilities: r.output, confidence: 0.9 }
     const value: HttpResponse = { status: 200, ok: true, headers: {}, text: JSON.stringify({ model: 'jev-1.13.0', answers }) }
     return { value }
   })
@@ -138,4 +142,77 @@ test("a routine's scheduled prompt is routed; a background notification is not",
   expect(w.requests.length).toBe(1)
   await step($)
   expect(w.steps[0]?.model).toBe('claude-haiku-4-5-20251001')
+})
+
+const BAR = {
+  component: 'AbovePrompt' as const,
+  props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} },
+}
+const science: Reply = { tier: { complex: 0.05, deep: 0.95 }, risky: 0, skill: { none: 1 }, subject: { science: 0.97, math: 0.03 }, output: { explanation: 0.9, analysis: 0.1 } }
+
+test('hard science goes to the Fable specialist; a follow-up stays on it', async ($, on) => {
+  const reply: { current: Reply } = { current: science }
+  const w = world(on, reply)
+  await submit($, 'derive the transition state energy for this SN2 reaction and explain the solvent effect')
+  expect(w.requests[0]?.questions.subject).toBeDefined()
+  await step($)
+  expect(w.steps[0]?.model).toBe('claude-fable-5-1')
+
+  reply.current = { tier: { complex: 0.1, deep: 0.9 }, risky: 0, skill: { none: 1 }, subject: { general: 0.9, science: 0.1 } }
+  await submit($, 'yes, go ahead')
+  await step($)
+  expect(w.steps[1]?.model).toBe('claude-fable-5-1')
+})
+
+test('the bar draws on terminal and desktop, and its controls change routing', async ($, on) => {
+  const reply: { current: Reply } = { current: science }
+  const w = world(on, reply)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const bar = await $.ui.mount({ plugin: 'jev-router', surface, ...BAR })
+    expect(await bar.find({ key: 'expand' })).toBeDefined()
+    await bar.press({ key: 'expand' })
+    expect(await bar.find({ key: 'focus-4' })).toBeDefined()
+    expect(await bar.find({ key: 'toggle-effort' })).toBeDefined()
+    await bar.press({ key: 'collapse' })
+    await bar.unmount()
+  }
+
+  // Token efficient: no premium specialist, so hard science falls back to Opus.
+  const bar = await $.ui.mount({ plugin: 'jev-router', surface: 'terminal', ...BAR })
+  await bar.press({ key: 'expand' })
+  await bar.press({ key: 'focus-0' })
+  await submit($, 'derive the transition state energy for this SN2 reaction')
+  await step($)
+  expect(w.steps[0]?.model).toBe('claude-opus-5-5')
+
+  // Effort on, then nudge the model down one tier by hand.
+  await bar.press({ key: 'toggle-effort' })
+  await bar.press({ key: 'model-down' })
+  await step($)
+  expect(w.steps[1]?.model).toBe('claude-opus-5-5') // deep -> complex is still Opus
+  expect(w.steps[1]?.effort).toBe('medium') // complex's high, one step down at token-efficient focus
+  await bar.press({ key: 'model-down' })
+  await step($)
+  expect(w.steps[2]?.model).toBe('claude-sonnet-5-5')
+  await bar.unmount()
+})
+
+test('/jev focus sets the level by name', async ($, on) => {
+  const reply: { current: Reply } = { current: science }
+  const w = world(on, reply)
+  on('session.start', async ($, e) => ({ cwd: e.cwd }))
+  on('command.register', async ($, e) => ({ value: { command: e.name } }))
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const jev = (args: string) =>
+    $.command.run({ command: 'jev', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  const out = await jev('focus token-efficient')
+  expect(out.text).toContain('Token efficient')
+  await submit($, 'derive the transition state energy for this SN2 reaction')
+  await step($)
+  expect(w.steps[0]?.model).toBe('claude-opus-5-5')
+  await jev('focus balanced')
+  await jev('reset')
+  await submit($, 'derive the transition state energy for this SN2 reaction')
+  await step($)
+  expect(w.steps[1]?.model).toBe('claude-fable-5-1')
 })

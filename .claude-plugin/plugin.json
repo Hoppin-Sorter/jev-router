@@ -1,7 +1,7 @@
 {
   "name": "jev-router",
-  "version": "0.4.0",
-  "description": "Asks Jev before each prompt which Claude model the task needs and which skill (if any) fits, then switches the model and hints the skill.",
+  "version": "0.5.0",
+  "description": "Asks Jev before each prompt what the task is and how hard it is, then picks the Claude model (and optionally effort) and the skill that fit. A control bar sets the quality/cost focus.",
   "author": {
     "name": "Ethan Hoppin",
     "url": "https://github.com/Hoppin-Sorter"
@@ -15,6 +15,7 @@
     "skills",
     "claude-code"
   ],
+  "types": "./types/index.d.ts",
   "userConfig": {
     "deepModel": {
       "type": "string",
@@ -37,6 +38,25 @@
       "title": "Effort routing",
       "description": "Also set reasoning effort by tier: routine → medium, complex → high, deep → xhigh (Haiku takes none). Off keeps your session's effort.",
       "default": false
+    },
+    "focus": {
+      "type": "string",
+      "title": "Starting focus",
+      "description": "Quality/cost trade-off until you move the bar's slider: token-efficient, lean, balanced, thorough or task-focused.",
+      "options": [
+        "token-efficient",
+        "lean",
+        "balanced",
+        "thorough",
+        "task-focused"
+      ],
+      "default": "balanced"
+    },
+    "focusBar": {
+      "type": "boolean",
+      "title": "Control bar",
+      "description": "Show the jev-router bar above the prompt (focus slider, toggles, model nudge).",
+      "default": true
     }
   }
 }

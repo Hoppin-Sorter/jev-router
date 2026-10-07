@@ -1,0 +1,28 @@
+{"subject": "science", "tier": "routine", "prompt": "Explain why a catalyst speeds up a reaction but does not change its equilibrium constant. Use the Haber process as the example."}
+{"subject": "science", "tier": "routine", "prompt": "Balance this redox reaction in acidic solution and show the half-reactions: MnO4- + Fe2+ -> Mn2+ + Fe3+"}
+{"subject": "science", "tier": "deep", "prompt": "Derive the steady-state rate law for a two-step enzyme mechanism with a reversible first step, state every assumption, and explain where Michaelis-Menten kinetics breaks down for allosteric enzymes."}
+{"subject": "science", "tier": "deep", "prompt": "A protein's melting temperature rises 6 °C when a surface salt bridge is engineered in, but its activity drops by half. Propose three mechanistic explanations and an experiment that would distinguish them."}
+{"subject": "math", "tier": "routine", "prompt": "Prove that the square root of 2 is irrational."}
+{"subject": "math", "tier": "routine", "prompt": "A test for a disease is 95% sensitive and 90% specific, and 2% of people have the disease. If someone tests positive, what is the probability they have it? Show the work."}
+{"subject": "math", "tier": "deep", "prompt": "Prove that every finite integral domain is a field, then explain how the argument generalizes to Artinian rings and where it fails for infinite domains."}
+{"subject": "math", "tier": "deep", "prompt": "Derive the expected number of fixed points of a uniformly random permutation of n elements, then find the variance, and explain why both are independent of n."}
+{"subject": "software", "tier": "routine", "prompt": "Write a Python function that merges two sorted lists into one sorted list in O(n) time, with tests for empty and duplicate inputs."}
+{"subject": "software", "tier": "routine", "prompt": "Explain the difference between a process and a thread, and when you would pick each for a web scraper."}
+{"subject": "software", "tier": "deep", "prompt": "Design a rate limiter for an API gateway that handles 50k requests per second across 20 nodes with per-customer limits. Compare token bucket and sliding window approaches and explain how you would keep counts consistent across nodes."}
+{"subject": "software", "tier": "deep", "prompt": "A service's p99 latency doubles every day at 3am and recovers by 4am, but CPU and memory look normal. List the most likely causes in order and the exact data you would collect to confirm each."}
+{"subject": "data", "tier": "routine", "prompt": "Write a SQL query that returns weekly signups by country for the last 12 weeks from a table users(id, created_at, country)."}
+{"subject": "data", "tier": "routine", "prompt": "What is the difference between mean and median, and which should I report for household income? Why?"}
+{"subject": "data", "tier": "deep", "prompt": "Our A/B test shows a 3% lift in conversion with p = 0.04, but the treatment group had 8% more mobile users. Explain whether to trust the result and how to correct for the imbalance."}
+{"subject": "data", "tier": "deep", "prompt": "Explain Simpson's paradox with a realistic hospital-outcomes example, and describe how to decide which aggregation level answers the real question."}
+{"subject": "writing", "tier": "routine", "prompt": "Write a friendly two-paragraph email asking a professor for a recommendation letter, mentioning the class I took and the deadline."}
+{"subject": "writing", "tier": "routine", "prompt": "Rewrite this sentence to be clearer and shorter: 'Due to the fact that we were not in possession of the necessary information, we were unable to make a determination at that point in time.'"}
+{"subject": "writing", "tier": "deep", "prompt": "Write a 500-word op-ed arguing that universities should teach AI literacy as a required course, anticipating and answering the two strongest objections."}
+{"subject": "writing", "tier": "deep", "prompt": "Write the opening scene of a short story in which a lighthouse keeper discovers the light has been signaling in a pattern she didn't program. Aim for tension and a distinct voice."}
+{"subject": "business", "tier": "routine", "prompt": "What are the pros and cons of annual versus monthly pricing for a consumer budgeting app?"}
+{"subject": "business", "tier": "routine", "prompt": "Summarize the difference between gross margin and contribution margin, with a one-line example of each."}
+{"subject": "business", "tier": "deep", "prompt": "Our app has 4% monthly churn and $18 ARPU. Should we raise prices 10% or add a $30 premium tier? Lay out the math under reasonable assumptions and recommend one."}
+{"subject": "business", "tier": "deep", "prompt": "A competitor just launched a free version of our core product. Propose a 90-day response plan with the three decisions that matter most and how you would measure whether each worked."}
+{"subject": "general", "tier": "routine", "prompt": "What's a good way to learn to touch type in a month?"}
+{"subject": "general", "tier": "routine", "prompt": "Explain how a refrigerator keeps food cold, in plain words."}
+{"subject": "general", "tier": "deep", "prompt": "Compare three ways to decide between two job offers when salary, growth and location all point in different directions, and say which you'd use and why."}
+{"subject": "general", "tier": "deep", "prompt": "Explain why the sky is blue and sunsets are red, then explain why clouds are white, using the same underlying physics."}
