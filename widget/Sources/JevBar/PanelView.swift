@@ -40,6 +40,7 @@ struct PanelView: View {
                     ForEach(Card.allCases) { card in
                         Toggle(card.rawValue, isOn: Binding(get: { model.isVisible(card) }, set: { model.setVisible(card, $0) }))
                     }
+                    Toggle("Water & CO₂ (estimate)", isOn: Binding(get: { model.showImpact }, set: { model.setShowImpact($0) }))
                 }
                 Divider()
                 Button(pill.isShown ? "Close pop-out" : "Pop out") { pill.toggle(model: model) }
@@ -214,6 +215,9 @@ struct SavedCard: View {
                     MixBar(mix: s.mix, total: s.requests)
                 }
                 Text(footnote(s)).font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if model.showImpact {
+                    ImpactLine(summary: s)
+                }
             } else {
                 Text("Reading Claude Code transcripts…").font(.caption).foregroundStyle(.secondary)
             }
@@ -231,6 +235,30 @@ struct SavedCard: View {
         var text = "\(s.requests) requests at API list prices; your plan may bill differently."
         if s.unpriced > 0 { text += " \(s.unpriced) on other models left out." }
         return text
+    }
+}
+
+/// The optional, low-key estimate of water and CO₂ behind the savings. Display only.
+struct ImpactLine: View {
+    let summary: SavingsSummary
+
+    var body: some View {
+        let impact = summary.impactSaved
+        let more = summary.saved < 0
+        HStack(spacing: 6) {
+            Image(systemName: "leaf").foregroundStyle(.secondary)
+            Text("\(more ? "Used" : "Saved") \(Impact.water(abs(impact.waterL))) water · \(Impact.co2(abs(impact.co2Kg))) CO₂e")
+                .monospacedDigit()
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .help(
+            "A rough estimate, not a measurement. It assumes energy tracks API list price "
+                + "(about 60 Wh per dollar, from Epoch AI's estimate for a typical GPT-4o query), "
+                + "1.1 L of cooling water per kWh (Google's Gemini figures) and 0.4 kg CO₂e per kWh "
+                + "(about the US grid average). \(Impact.energy(impact.energyWh)) of energy. "
+                + "It has no effect on which model Jev picks."
+        )
     }
 }
 

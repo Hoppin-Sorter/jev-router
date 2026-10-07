@@ -96,6 +96,26 @@ for (name, raw) in expected["windows"] as! [String: [String: Any]] {
     check(s.mix.map { "\($0.key):\($0.requests)" } == mix, "\(name) mix \(s.mix.map(\.key))")
 }
 
+// MARK: Water and CO₂ (display-only estimate)
+
+do {
+    let f = expected["impactFactors"] as! [String: Double]
+    check(ImpactFactors.standard == ImpactFactors(whPerUSD: f["whPerUSD"]!, litersPerKWh: f["litersPerKWh"]!, kgCO2PerKWh: f["kgCO2PerKWh"]!), "impact factors")
+    for (name, raw) in expected["impact"] as! [String: [String: Any]] {
+        let s = SavingsSummary.make(usage: all, decisions: decisions, window: SavingsWindow(rawValue: name)!, now: now, calendar: utc)
+        let i = s.impactSaved
+        check(near(s.saved, raw["saved"] as! Double), "\(name) saved for impact \(s.saved)")
+        check(near(i.energyWh, raw["energyWh"] as! Double), "\(name) energy \(i.energyWh)")
+        check(near(i.waterL, raw["waterL"] as! Double, 1e-12), "\(name) water \(i.waterL)")
+        check(near(i.co2Kg, raw["co2Kg"] as! Double, 1e-12), "\(name) CO2 \(i.co2Kg)")
+        check(Impact.water(i.waterL) == raw["water"] as! String, "\(name) water text \(Impact.water(i.waterL))")
+        check(Impact.co2(i.co2Kg) == raw["co2"] as! String, "\(name) CO2 text \(Impact.co2(i.co2Kg))")
+    }
+    check(Impact.water(1.2) == "≈ 1.2 L" && Impact.co2(0.045) == "≈ 45 g", "water and CO2 units")
+    check(Impact.energy(0.338976) == "≈ 0.34 Wh" && Impact.energy(1500) == "≈ 1.5 kWh", "energy text")
+    check(Impact(usd: 0).waterL == 0, "nothing saved, nothing claimed")
+}
+
 // MARK: The ~/.config/jev contract
 
 let store = ConfigStore(dir: scratch.appendingPathComponent("config"))

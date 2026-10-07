@@ -115,6 +115,17 @@ class WidgetFixtureTest(unittest.TestCase):
             ordered = sorted(mix.items(), key=lambda kv: (-kv[1], ORDER.index(kv[0])))
             self.assertEqual([list(kv) for kv in ordered], want["mix"], name)
 
+    def test_impact(self):
+        f = self.expected["impactFactors"]
+        for name, want in self.expected["impact"].items():
+            w = self.expected["windows"][name]
+            saved = w["baseline"] - w["actual"] - w["jev"]
+            self.assertAlmostEqual(saved, want["saved"], places=12, msg=name)
+            wh = saved * f["whPerUSD"]
+            self.assertAlmostEqual(wh, want["energyWh"], places=9, msg=name)
+            self.assertAlmostEqual(wh / 1000 * f["litersPerKWh"], want["waterL"], places=12, msg=name)
+            self.assertAlmostEqual(wh / 1000 * f["kgCO2PerKWh"], want["co2Kg"], places=12, msg=name)
+
 
 if __name__ == "__main__":
     unittest.main()

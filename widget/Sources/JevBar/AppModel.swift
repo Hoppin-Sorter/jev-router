@@ -26,6 +26,9 @@ final class AppModel {
     private(set) var writeError: String?
     var savingsWindow: SavingsWindow = .today
     private(set) var hiddenCards: Set<String>
+    /// The optional water and CO₂ estimate under Saved. Off until the person turns it on;
+    /// display only, never sent anywhere or read by the router.
+    private(set) var showImpact: Bool
 
     let store = ConfigStore()
     @ObservationIgnored private var decisions: [Decision] = []
@@ -40,6 +43,7 @@ final class AppModel {
 
     init() {
         hiddenCards = Set(UserDefaults.standard.stringArray(forKey: "hiddenCards") ?? [])
+        showImpact = UserDefaults.standard.bool(forKey: "showImpact")
         refresh()
         let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -145,5 +149,10 @@ final class AppModel {
     func setVisible(_ card: Card, _ on: Bool) {
         if on { hiddenCards.remove(card.rawValue) } else { hiddenCards.insert(card.rawValue) }
         UserDefaults.standard.set(Array(hiddenCards), forKey: "hiddenCards")
+    }
+
+    func setShowImpact(_ on: Bool) {
+        showImpact = on
+        UserDefaults.standard.set(on, forKey: "showImpact")
     }
 }

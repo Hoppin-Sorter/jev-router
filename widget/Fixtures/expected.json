@@ -4,12 +4,85 @@
   "comment": "Worked by hand from Fixtures/projects and Fixtures/config at the prices in widget/Sources/JevCore/Pricing.swift. Checked by widget/Sources/JevCoreChecks and tests/test_widget_fixtures.py.",
   "distinctRequests": 8,
   "windows": {
-    "Today": { "actual": 0.1135, "baseline": 0.0792, "jev": 0.0000252, "requests": 2, "unpriced": 1,
-               "mix": [["haiku-4-5", 1], ["fable-5-1", 1]] },
-    "7 days": { "actual": 0.2635, "baseline": 0.2692, "jev": 0.0000378, "requests": 5, "unpriced": 1,
-                "mix": [["haiku-4-5", 1], ["sonnet-5-5", 1], ["fable-5-1", 1], ["opus-5", 1], ["fable-5", 1]] },
-    "30 days": { "actual": 0.3055, "baseline": 0.3112, "jev": 0.0000504, "requests": 6, "unpriced": 1,
-                 "mix": [["haiku-4-5", 1], ["sonnet-5-5", 1], ["opus-5-5", 1], ["fable-5-1", 1], ["opus-5", 1], ["fable-5", 1]] }
+    "Today": {
+      "actual": 0.1135,
+      "baseline": 0.0792,
+      "jev": 2.52e-05,
+      "requests": 2,
+      "unpriced": 1,
+      "mix": [
+        [
+          "haiku-4-5",
+          1
+        ],
+        [
+          "fable-5-1",
+          1
+        ]
+      ]
+    },
+    "7 days": {
+      "actual": 0.2635,
+      "baseline": 0.2692,
+      "jev": 3.78e-05,
+      "requests": 5,
+      "unpriced": 1,
+      "mix": [
+        [
+          "haiku-4-5",
+          1
+        ],
+        [
+          "sonnet-5-5",
+          1
+        ],
+        [
+          "fable-5-1",
+          1
+        ],
+        [
+          "opus-5",
+          1
+        ],
+        [
+          "fable-5",
+          1
+        ]
+      ]
+    },
+    "30 days": {
+      "actual": 0.3055,
+      "baseline": 0.3112,
+      "jev": 5.04e-05,
+      "requests": 6,
+      "unpriced": 1,
+      "mix": [
+        [
+          "haiku-4-5",
+          1
+        ],
+        [
+          "sonnet-5-5",
+          1
+        ],
+        [
+          "opus-5-5",
+          1
+        ],
+        [
+          "fable-5-1",
+          1
+        ],
+        [
+          "opus-5",
+          1
+        ],
+        [
+          "fable-5",
+          1
+        ]
+      ]
+    }
   },
   "models": {
     "claude-haiku-4-5-20251001": "haiku-4-5",
@@ -23,5 +96,28 @@
     "claude-sonnet-4-5": null,
     "claude-opus-5-1": null,
     "<synthetic>": null
+  },
+  "impactFactors": {
+    "whPerUSD": 60,
+    "litersPerKWh": 1.1,
+    "kgCO2PerKWh": 0.4
+  },
+  "impact": {
+    "Today": {
+      "saved": -0.0343252,
+      "energyWh": -2.059512,
+      "waterL": -0.0022654632,
+      "co2Kg": -0.0008238048,
+      "water": "≈ −2.3 mL",
+      "co2": "≈ −824 mg"
+    },
+    "30 days": {
+      "saved": 0.0056496,
+      "energyWh": 0.338976,
+      "waterL": 0.0003728736,
+      "co2Kg": 0.0001355904,
+      "water": "≈ 0.37 mL",
+      "co2": "≈ 136 mg"
+    }
   }
 }

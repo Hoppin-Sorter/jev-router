@@ -118,17 +118,34 @@ Focus  Token efficient ○ ○ ● ○ ○ Task focused  (Balanced)
 - **Focus:** the same 5-step slider as the control bar, from Token efficient to Task focused, plus the Effort, Skills and Specialists switches.
 - **Saved:** for Today, 7 days or 30 days, what your Claude Code requests were worth at API list prices, against the same tokens all on Opus 5.5, minus what Jev cost, with a bar showing the model mix. These are list-price values; a Pro or Max plan bills differently.
 - **Recent:** the last five decisions. Never your prompt text.
-- **⋯ menu:** **Customize** shows or hides each card. **Pop out** opens a small floating pill (model, focus, today's savings) that stays on top on every Space; drag it anywhere.
+- **⋯ menu:** **Customize** shows or hides each card, and turns on the optional **Water & CO₂** line (below). **Pop out** opens a small floating pill (model, focus, today's savings) that stays on top on every Space; drag it anywhere.
 
-Build and install it (needs Xcode or the Command Line Tools, Swift 5.9+):
+The widget is never built for you. Installing the plugin doesn't build it, and nothing in jev-router runs the build script on its own. When you want it, build it yourself (needs Xcode or the Command Line Tools, Swift 5.9+):
 
 ```bash
 cd widget
-swift run JevCoreChecks          # checks the pricing, settings and transcript logic
-scripts/bundle.sh --install      # builds "Jev Bar.app", signs it ad hoc, copies it to ~/Applications and opens it
+swift run JevCoreChecks          # optional: checks the pricing, settings and transcript logic
+scripts/bundle.sh --install      # asks first, then builds "Jev Bar.app" and signs it ad hoc;
+                                 # asks again before copying it to ~/Applications and opening it
 ```
 
+`bundle.sh` asks before it builds and again before it installs, and answers no if there's no terminal to ask on. Pass `--yes` only if you've already decided, for example in your own setup script. If an AI assistant is setting jev-router up for you, it should ask you before building the widget too (see `CLAUDE.md`).
+
 The app is signed ad hoc, not notarized. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. To start it at login, add it under System Settings → General → Login Items.
+
+### Water & CO₂ (optional)
+
+Turn on **⋯ → Customize → Water & CO₂ (estimate)** for one small line under **Saved**, like `🍃 Saved ≈ 0.37 mL water · ≈ 136 mg CO₂e`. It's off by default and display only: the router never reads it, so it has no effect on which model Jev picks.
+
+It's a rough estimate. Anthropic doesn't publish per-model energy figures, so it treats API list price as a stand-in for compute and converts the dollars saved:
+
+| Step | Factor | Basis |
+|---|---|---|
+| Energy | 60 Wh per $ of list-price usage | [Epoch AI](https://epoch.ai/gradient-updates/how-much-energy-does-chatgpt-use)'s ~0.3 Wh for a typical GPT-4o query, which is about $0.005 at list price |
+| Water | 1.1 L per kWh | [Google's Gemini figures](https://cloud.google.com/blog/products/infrastructure/measuring-the-environmental-impact-of-ai-inference) (0.26 mL per 0.24 Wh, data-center cooling only) |
+| CO₂e | 0.4 kg per kWh | about the US grid average (location-based; providers buying clean power report less) |
+
+Hover over the line for the energy figure. When routing cost more than Opus 5.5 would have (say, a lot of Fable), it reads **Used** instead of **Saved**. The factors live in `widget/Sources/JevCore/Impact.swift`.
 
 ### How the widget and the plugin talk
 
@@ -334,6 +351,8 @@ Nothing on disk keeps your prompts: the plugin's own history and the files in `~
 - If Jev is slow (> 3 s), errors, or the key is missing, the prompt goes through unrouted.
 
 ## Development
+
+AI assistants working in this repo: read `CLAUDE.md` first. In short, don't build or install the widget for someone without asking them.
 
 ```bash
 claude plugin validate .                      # plugin manifest + hooks
