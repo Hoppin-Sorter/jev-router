@@ -23,15 +23,25 @@ claude plugin marketplace add Hoppin-Sorter/jev-router
 claude plugin install jev-router@jev-router
 ```
 
-Then add a Jev API key from [console.typesafe.ai](https://console.typesafe.ai). Copy the key, then:
+Then add your own Jev API key (next section). Type `/jev` in a session to confirm it found the key.
 
-```bash
-mkdir -p ~/.config/jev && pbpaste > ~/.config/jev/api_key && chmod 600 ~/.config/jev/api_key
-```
+## Your API key (bring your own)
 
-(`pbpaste` is macOS; elsewhere, write the key to that file any way you like.) The plugin also reads `TYPESAFE_API_KEY` or `JEV_API_KEY` from the environment. Without a key it does nothing and your model is left alone.
+**This plugin ships with no API key.** Everyone who installs it uses their own TypeSafe account and pays for their own usage. Nobody can use your key unless you give it to them.
 
-Type `/jev` in a session to confirm it found the key.
+1. Create a key at [console.typesafe.ai](https://console.typesafe.ai) and copy it.
+2. Save it on your machine, readable only by you:
+   ```bash
+   mkdir -p ~/.config/jev && pbpaste > ~/.config/jev/api_key && chmod 600 ~/.config/jev/api_key
+   ```
+   (`pbpaste` is macOS; elsewhere, write the key to that file any way you like.) The plugin also reads `TYPESAFE_API_KEY` or `JEV_API_KEY` from the environment.
+
+How the key is handled:
+- It is read from your machine at each prompt and sent **only** to `api.typesafe.ai` over HTTPS, as the request's `Authorization` header.
+- It is never written anywhere, never shown in `/jev` or the status line (they show only *where* it was found), and never put in Claude's context.
+- It lives outside the repo, and `.gitignore` blocks common key filenames (`api_key`, `*.key`, `.env`) in case you fork this. Don't paste your key into a chat with Claude or into an issue.
+
+Without a key the plugin does nothing and your model is left alone.
 
 ## How it decides
 
@@ -45,6 +55,7 @@ Type `/jev` in a session to confirm it found the key.
 - **Doubt rounds up.** The cheapest tier wins only when Jev's probability that it is enough clears the bar above.
 - **Risky prompts floor at Opus.** Anything Jev rates likely to touch production, credentials, permissions, billing, or irreversible deletion (≥ 0.7) never goes below Opus.
 - **No mid-task downgrades.** Within an active stretch the tier only goes up, so "yes, go ahead" stays on the model that planned the work and the prompt cache stays warm. It resets after 10 idle minutes or `/jev reset`.
+- **Effort (optional).** With `effortRouting` on, reasoning effort follows the tier too: routine → medium, complex → high, deep → xhigh. Off by default, which keeps your session's effort.
 - **Skills** are chosen from your installed skills and commands, with `none` as an option. A hint is added only at 50%+ confidence.
 - **Not routed:** slash commands, notifications, and subagents (they keep their own model).
 
@@ -65,6 +76,7 @@ Set in `/plugin configure jev-router@jev-router`:
 |---|---|---|
 | `deepModel` | `claude-opus-5-5` | Model for the deepest tier. Set `claude-fable-5-1` for a stronger (and pricier) top tier. |
 | `skillHints` | `true` | Tell Claude which installed skill Jev picked. |
+| `effortRouting` | `false` | Also set reasoning effort by tier: routine → medium, complex → high, deep → xhigh. Haiku takes none. Off keeps your session's effort. |
 
 ## Cost
 
@@ -76,7 +88,7 @@ Per prompt, to `https://api.typesafe.ai/v1/systemone`: the first 6,000 character
 
 ## Limits
 
-- Routes the **model** only. Reasoning effort stays at your session setting (it is dropped for Haiku, which doesn't take one).
+- Effort routing is a fixed mapping from the tier, not a separate judgment by Jev. With it off, effort stays at your session setting (it is always dropped for Haiku, which doesn't take one).
 - Jev's accuracy is strongest on English. See TypeSafe's [known weaknesses](https://docs.typesafe.ai/model-jaggedness/jev-1.13).
 - If Jev is slow (> 3 s), errors, or the key is missing, the prompt goes through unrouted.
 

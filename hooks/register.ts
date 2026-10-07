@@ -2,17 +2,20 @@ import type { CommandInfo, EngineInterface, Register } from 'claude-code'
 
 // Before each prompt, one Jev request decides two things: which Claude model the
 // task needs (by complexity and risk) and which installed skill, if any, fits it.
-// The model is applied to every main-loop request of the turn; the skill reaches
-// Claude as a hidden note beside the prompt.
+// The model (and, with effort routing on, the reasoning effort) is applied to every
+// main-loop request of the turn; the skill reaches Claude as a hidden note beside
+// the prompt.
 
 type Tier = 'mechanical' | 'routine' | 'complex' | 'deep'
 type Mode = 'auto' | 'off' | Tier
+type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 type Decision = {
   at: number
   prompt: string
   tier: Tier
   model: string
+  effort?: Effort
   why: string
   skill?: string
 }
@@ -37,6 +40,13 @@ const TIER_RUBRIC: Record<Tier, string> = {
 // How sure Jev must be that a tier is enough. The cheapest tier whose cumulative
 // probability clears its bar wins, so uncertainty always rounds up, never down.
 const ENOUGH: Record<Tier, number> = { mechanical: 0.85, routine: 0.7, complex: 0.5, deep: 0 }
+// With effort routing on, reasoning effort follows the tier. Haiku takes no effort.
+const TIER_EFFORT: Record<Tier, Effort | undefined> = {
+  mechanical: undefined,
+  routine: 'medium',
+  complex: 'high',
+  deep: 'xhigh',
+}
 const RISK_FLOOR = 0.7
 const SKILL_MIN = 0.5
 // Within an active stretch the tier only goes up: follow-ups like "yes, do it" stay
@@ -189,9 +199,12 @@ export const register: Register = (on, options) => {
     deep: typeof options.deepModel === 'string' ? options.deepModel : 'claude-opus-5-5',
   }
   const skillHints = options.skillHints !== false
+  const effortRouting = options.effortRouting === true
+  const effortFor = (tier: Tier) => (effortRouting ? TIER_EFFORT[tier] : undefined)
 
   let mode: Mode = 'auto'
   let active: { tier: Tier; model: string; at: number } | undefined
+
   on('session.start', async ($, e, next) => {
     const saved = await $.store.get('mode')
     if (isMode(saved)) mode = saved
@@ -246,8 +259,9 @@ export const register: Register = (on, options) => {
     }
 
     active = { tier, model: models[tier], at: now }
-    await record($, { at: now, prompt: e.text.slice(0, 80), tier, model: active.model, why, skill: skill?.name })
-    await $.ui.status(`Jev → ${label(active.model)}${skill ? ` · /${skill.name}` : ''}`)
+    const effort = effortFor(tier)
+    await record($, { at: now, prompt: e.text.slice(0, 80), tier, model: active.model, effort, why, skill: skill?.name })
+    await $.ui.status(`Jev → ${label(active.model)}${effort ? ` · ${effort}` : ''}${skill ? ` · /${skill.name}` : ''}`)
 
     if (!skill) return next(e)
     const hint =
@@ -259,13 +273,13 @@ export const register: Register = (on, options) => {
   // Every main-loop request of the turn goes to the chosen model; subagents keep
   // the model their own definition gives them.
   on('turn.step', async function* ($, e, next) {
-    if (e.agentId || mode === 'off' || !active || e.model === active.model) return yield* next(e)
-    // Haiku takes no effort setting, so the session's (resolved for its own model) is left off.
-    if (active.tier === 'mechanical') {
-      const { effort: _effort, ...rest } = e
-      return yield* next({ ...rest, model: active.model })
-    }
-    return yield* next({ ...e, model: active.model })
+    if (e.agentId || mode === 'off' || !active) return yield* next(e)
+    const { effort, ...rest } = e
+    // Haiku takes no effort setting, so the session's (resolved for its own model) is
+    // left off; otherwise the tier's effort when routing it, else the session's.
+    const wanted = active.tier === 'mechanical' ? undefined : (effortFor(active.tier) ?? effort)
+    if (e.model === active.model && wanted === effort) return yield* next(e)
+    return yield* next(wanted ? { ...rest, model: active.model, effort: wanted } : { ...rest, model: active.model })
   })
 
   // A long turn counts as activity, so the idle reset runs from when work stopped.
@@ -301,7 +315,8 @@ export const register: Register = (on, options) => {
     const history = await readHistory($)
     const lines = [
       `Jev router: ${mode === 'auto' || mode === 'off' ? mode : `pinned to ${mode}`}`,
-      `Tiers: ${TIERS.map(t => `${t} → ${label(models[t])}`).join(', ')}`,
+      `Tiers: ${TIERS.map(t => `${t} → ${label(models[t])}${effortFor(t) ? ` (${effortFor(t)})` : ''}`).join(', ')}`,
+      `Effort routing: ${effortRouting ? 'on' : "off (your session's effort is kept)"}`,
       key
         ? `API key: found (${key.from})`
         : 'API key: missing. Get one at console.typesafe.ai, then save it to ~/.config/jev/api_key (or set TYPESAFE_API_KEY).',
@@ -312,7 +327,8 @@ export const register: Register = (on, options) => {
       lines.push('', 'Recent decisions:')
       for (const d of history.slice(0, 10)) {
         const time = new Date(d.at).toTimeString().slice(0, 5)
-        lines.push(`  ${time}  ${label(d.model).padEnd(10)} ${d.skill ? `/${d.skill}  ` : ''}"${d.prompt}"  ${d.why}`)
+        const effort = d.effort ? ` ${d.effort}` : ''
+        lines.push(`  ${time}  ${(label(d.model) + effort).padEnd(16)} ${d.skill ? `/${d.skill}  ` : ''}"${d.prompt}"  ${d.why}`)
       }
     }
     lines.push('', 'Commands: /jev auto | /jev off | /jev pin <tier> | /jev reset')

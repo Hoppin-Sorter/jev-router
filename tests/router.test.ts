@@ -71,6 +71,7 @@ test('a routine SQL prompt goes to Sonnet with the SQL skill hinted', async ($, 
   expect(skillOptions).toEqual(['none', 'data:sql-queries', 'pdf-viewer:open'])
   await step($)
   expect(w.steps[0]?.model).toBe('claude-sonnet-5-5')
+  expect(w.steps[0]?.effort).toBe('xhigh')
 })
 
 test('a risky prompt floors at Opus even when Jev calls it mechanical', async ($, on) => {
@@ -105,4 +106,24 @@ test('without a key nothing is routed', async ($, on) => {
   expect(w.requests.length).toBe(0)
   await step($)
   expect(w.steps[0]?.model).toBe('claude-opus-5-5')
+})
+
+test('with effort routing on, effort follows the tier', { options: { effortRouting: true } }, async ($, on) => {
+  const reply: { current: Reply } = { current: { tier: { routine: 0.9, complex: 0.1 }, risky: 0, skill: { none: 1 } } }
+  const w = world(on, reply)
+  await submit($, 'add a dark mode toggle to settings')
+  await step($)
+  expect(w.steps[0]?.model).toBe('claude-sonnet-5-5')
+  expect(w.steps[0]?.effort).toBe('medium')
+
+  reply.current = { tier: { complex: 0.9, deep: 0.1 }, risky: 0, skill: { none: 1 } }
+  await submit($, 'checkout double-charges users; find out why')
+  await step($)
+  expect(w.steps[1]?.model).toBe('claude-opus-5-5')
+  expect(w.steps[1]?.effort).toBe('high')
+
+  reply.current = { tier: { deep: 1 }, risky: 0, skill: { none: 1 } }
+  await submit($, 'design the sharding strategy for our event store')
+  await step($, 'claude-opus-5-5')
+  expect(w.steps[2]?.effort).toBe('xhigh')
 })
