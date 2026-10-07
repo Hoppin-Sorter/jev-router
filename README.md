@@ -1,24 +1,35 @@
 # jev-router
 
-A Claude Code plugin that asks [Jev](https://docs.typesafe.ai) (TypeSafe's fast decision model) two things before every prompt:
+Stop paying top-model prices for "rename this variable." Before each prompt, jev-router asks [Jev](https://docs.typesafe.ai) (TypeSafe's fast decision model) two things:
 
-1. **Which Claude model does this task need?** Simple edits go to Haiku, everyday coding to Sonnet, hard or risky work to Opus.
-2. **Which installed skill, if any, fits?** If one clearly does, Claude gets a hidden note to use it.
+1. **Which model does this task need?** Simple edits go to a small, cheap model, everyday work to a mid-size one, hard or risky work to the best one. It works with **Claude** and **OpenAI (GPT-6)** models, and can set the reasoning effort too.
+2. **Which of your skills, if any, fits?** If one clearly does, the agent is nudged to use it.
 
-One Jev call per prompt, about 0.3 seconds.
+One Jev call per prompt, about 0.3 seconds and a fraction of a cent.
 
 ```
-you: rename foo to userCount in utils.ts      →  Haiku 4.5
-you: add a dark mode toggle to settings       →  Sonnet 5.5
-you: checkout double-charges users, find why  →  Opus 5.5   (risky)
+you: rename foo to userCount in utils.ts      →  Haiku 4.5    |  GPT-6 Luna (low)
+you: add a dark mode toggle to settings       →  Sonnet 5.5   |  GPT-6.1 Sol (medium)
+you: checkout double-charges users, find why  →  Opus 5.5     |  GPT-6 Astra (high)   (risky)
 you: weekly signups by country in BigQuery    →  Sonnet 5.5 + hint: data:sql-queries
 ```
 
-It also works outside Claude Code: load the plugin into the [Claude Agent SDK](#use-with-the-claude-agent-sdk), or drop the standalone [TypeScript or Python router](#use-in-your-own-agent) into any agent you build.
+## Which one do I use?
 
-> **Early access.** The plugin uses Claude Code's function-hooks plugin API, which can change between releases. Built and tested on Claude Code 2.1.289.
+| You use | Use this | Picks the model for each prompt? |
+|---|---|---|
+| **Claude Code** (terminal, desktop app, IDE) | the [plugin](#install-the-claude-code-plugin) | Yes, automatically |
+| **Claude Agent SDK** | the plugin, [loaded by the SDK](#use-with-the-claude-agent-sdk) | Yes (untested end to end) |
+| **Your own app on the Claude API** | the [router library](#use-in-your-own-agent) | Yes |
+| **Your own app on the OpenAI API** | the [router library](#use-with-openai-models-and-chatgpt) with `provider: "openai"` | Yes |
+| **Codex CLI** (ChatGPT sign-in or API key) | [`jev_router.py --run codex`](#codex-cli) | For each run you launch with it. Codex has no way yet to switch models by itself mid-session |
+| **The ChatGPT app / chatgpt.com** | not supported | No. The app has no hook for outside code to choose its model |
 
-## Install
+Everything needs your own Jev key, so start with [Your API key](#your-api-key-bring-your-own).
+
+> **Early access.** The plugin uses Claude Code's function-hooks plugin API, which can change between releases. Built and tested on Claude Code 2.1.289. The OpenAI model names and settings come from OpenAI's docs as of October 2026; the Codex launcher has not been run against a real Codex install yet.
+
+## Install the Claude Code plugin
 
 ```bash
 claude plugin marketplace add Hoppin-Sorter/jev-router
@@ -29,14 +40,14 @@ Then add your own Jev API key (next section). Type `/jev` in a session to confir
 
 ## Your API key (bring your own)
 
-**This plugin ships with no API key.** Everyone who installs it uses their own TypeSafe account and pays for their own usage. Nobody can use your key unless you give it to them.
+**Nothing here ships with an API key.** Everyone who installs the plugin or copies the router uses their own TypeSafe account and pays for their own usage. Nobody can use your key unless you give it to them.
 
 1. Create a key at [console.typesafe.ai](https://console.typesafe.ai) and copy it.
 2. Save it on your machine, readable only by you:
    ```bash
    mkdir -p ~/.config/jev && pbpaste > ~/.config/jev/api_key && chmod 600 ~/.config/jev/api_key
    ```
-   (`pbpaste` is macOS; elsewhere, write the key to that file any way you like.) The plugin also reads `TYPESAFE_API_KEY` or `JEV_API_KEY` from the environment.
+   (`pbpaste` is macOS; elsewhere, write the key to that file any way you like.) The plugin and the command-line tool also read `TYPESAFE_API_KEY` or `JEV_API_KEY` from the environment.
 
 How the key is handled:
 - It is read from your machine at each prompt and sent **only** to `api.typesafe.ai` over HTTPS, as the request's `Authorization` header.
@@ -145,8 +156,79 @@ reply = client.messages.create(
 - **Same rules as the plugin:** doubt rounds up, risky prompts floor at Opus, and one router instance holds its tier for 10 minutes so follow-ups stay on the same model. Call `reset()` when a new task starts.
 - **`r.skill`** is the name of the skill Jev picked, or none. How you load it is up to your agent (for example, add that skill's instructions to the system prompt).
 - **If Jev fails** (no network, bad key, over 3 s), `routed` is false and you get the `fallback` tier (default `complex`), so a request never blocks on the router.
-- **Options:** `models` to change any tier's model, `holdMs` / `hold_seconds` (0 turns holding off), `timeoutMs` / `timeout`, `fallback`.
-- Off-the-shelf tools like Cursor or Codex generally don't let outside code switch their model per prompt, so the router fits agents where you make the API call yourself.
+- **Options:** `provider` (`"anthropic"` default, or `"openai"`), `models` and `efforts` to change any tier's model or effort, `holdMs` / `hold_seconds` (0 turns holding off), `timeoutMs` / `timeout`, `fallback`.
+- Off-the-shelf tools like Cursor generally don't let outside code switch their model per prompt, so the router fits agents where you make the API call yourself. For Codex, see [below](#codex-cli).
+
+## Use with OpenAI models and ChatGPT
+
+The same router picks between OpenAI's GPT-6 models. Pass `provider: "openai"` (TypeScript) or `provider="openai"` (Python):
+
+| Jev says | Model | Reasoning effort |
+|---|---|---|
+| mechanical | `gpt-6-luna` | low |
+| routine | `gpt-6.1-sol` | medium |
+| complex | `gpt-6-astra` | high |
+| deep | `gpt-6-astra` | xhigh |
+
+Every pairing is valid for its model, and the other rules (doubt rounds up, risky prompts floor at `complex`, tier holding) are the same as above. To spend less, move `complex` to Sol: `models: { complex: "gpt-6.1-sol" }`.
+
+### OpenAI API
+
+```ts
+import OpenAI from "openai";
+import { createRouter } from "./jev-router";
+
+const client = new OpenAI();
+const router = createRouter({ apiKey: process.env.TYPESAFE_API_KEY!, provider: "openai" });
+
+const r = await router.route(userMessage);
+const reply = await client.responses.create({
+  model: r.model,
+  ...(r.effort && { reasoning: { effort: r.effort } }),
+  input: userMessage,
+});
+```
+
+```python
+import os
+from openai import OpenAI
+from jev_router import Router
+
+client = OpenAI()
+router = Router(api_key=os.environ["TYPESAFE_API_KEY"], provider="openai")
+
+r = router.route(user_message)
+reply = client.responses.create(
+    model=r.model,
+    **({"reasoning": {"effort": r.effort}} if r.effort else {}),
+    input=user_message,
+)
+```
+
+On the Chat Completions API, pass `reasoning_effort=r.effort` instead.
+
+### Codex CLI
+
+`lib/jev_router.py` is also a command. It asks Jev, then launches Codex with the right model and effort for that one run. Python 3.9+ is the only requirement.
+
+```bash
+# see the decision
+python3 lib/jev_router.py "fix the failing test in auth.spec.ts"
+# {"tier": "routine", "model": "gpt-6.1-sol", "effort": "medium", "skill": null, "routed": true, ...}
+
+# run it: non-interactive, or an interactive session
+python3 lib/jev_router.py --run codex-exec "fix the failing test in auth.spec.ts"
+python3 lib/jev_router.py --run codex "fix the failing test in auth.spec.ts"
+```
+
+`--run` runs `codex exec -m <model> -c model_reasoning_effort="<effort>" "<prompt>"` for you (plain `codex` for the interactive form). Add `--skills-dir DIR` (repeatable; default `~/.codex/skills`) to let Jev pick from your skills; a pick becomes a one-line suggestion at the top of the prompt. Each run is independent, so there is no tier holding between runs.
+
+- **Why per run, not automatic?** Codex doesn't let a plugin or hook change the model between turns. [A request for that](https://github.com/openai/codex/issues/45904) is open. Until it ships, the launcher is the way to get routing. Inside an interactive Codex session you can still follow Jev's suggestion by hand with `/model`.
+- Add a shell alias if you like: `alias cx='python3 /path/to/jev_router.py --run codex'`.
+
+### The ChatGPT app
+
+Not supported. The ChatGPT app (and chatgpt.com) has no hook for outside code to pick its model, so nothing here can switch it for you. If you use ChatGPT through Codex, use the Codex launcher above.
 
 ## Cost
 
@@ -154,7 +236,7 @@ Jev is billed per input token on your TypeSafe account. Check [current pricing](
 
 ## What gets sent to TypeSafe
 
-Per prompt, to `https://api.typesafe.ai/v1/systemone`: the first 6,000 characters of your message, and the name plus first 200 characters of the description of each installed skill or command. Nothing else (no files, no conversation history). If that's not acceptable for a project, run `/jev off`.
+Per prompt, to `https://api.typesafe.ai/v1/systemone`: the first 6,000 characters of your message, and the name plus first 200 characters of the description of each installed skill or command. Nothing else (no files, no conversation history). Your prompt also goes to Anthropic or OpenAI as it normally would, whichever model you use. If sending prompts to TypeSafe isn't acceptable for a project, run `/jev off` (plugin) or don't call the router.
 
 ## Limits
 
@@ -168,7 +250,7 @@ Per prompt, to `https://api.typesafe.ai/v1/systemone`: the first 6,000 character
 claude plugin validate .                      # plugin manifest + hooks
 claude plugin test .                          # plugin tests (tests/router.test.ts)
 node --test tests/jev-router.spec.ts          # TypeScript router
-python3 -m unittest discover -s tests         # Python router
+python3 -m unittest discover -s tests         # Python router + Codex launcher
 claude --plugin-dir .                         # load the plugin for one session
 ```
 

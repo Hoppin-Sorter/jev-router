@@ -45,6 +45,29 @@ export const DEFAULT_MODELS: Record<Tier, string> = {
   deep: 'claude-opus-5-5',
 }
 
+// OpenAI presets (Responses API `reasoning.effort`, Chat Completions `reasoning_effort`,
+// Codex `model_reasoning_effort`). Every pairing is valid for its model: Luna accepts
+// none..max, Sol and Astra accept low..max. Move `complex` to Sol with the `models`
+// option to spend less.
+export const OPENAI_MODELS: Record<Tier, string> = {
+  mechanical: 'gpt-6-luna',
+  routine: 'gpt-6.1-sol',
+  complex: 'gpt-6-astra',
+  deep: 'gpt-6-astra',
+}
+export const OPENAI_EFFORT: Record<Tier, string | null> = {
+  mechanical: 'low',
+  routine: 'medium',
+  complex: 'high',
+  deep: 'xhigh',
+}
+
+export type Provider = 'anthropic' | 'openai'
+export const PRESETS: Record<Provider, { models: Record<Tier, string>; efforts: Record<Tier, string | null> }> = {
+  anthropic: { models: DEFAULT_MODELS, efforts: TIER_EFFORT },
+  openai: { models: OPENAI_MODELS, efforts: OPENAI_EFFORT },
+}
+
 const PROMPT_CHARS = 6_000
 const DESCRIPTION_CHARS = 200
 const MAX_SKILLS = 254 // a Choice takes 255 options; one is `none`
@@ -127,8 +150,12 @@ export type RouterOptions = {
   apiKey: string
   /** Skills the agent can load; Jev picks at most one per prompt. */
   skills?: readonly Skill[]
+  /** Whose models to route between. Default `anthropic`. */
+  provider?: Provider
   /** Override the model for any tier. */
   models?: Partial<Record<Tier, string>>
+  /** Override the reasoning effort for any tier (null sends none). */
+  efforts?: Partial<Record<Tier, string | null>>
   /** How long a task holds its tier against downgrades (ms). 0 turns holding off. Default 10 min. */
   holdMs?: number
   /** Give up on Jev after this long (ms) and use `fallback`. Default 3000. */
@@ -141,10 +168,10 @@ export type RouterOptions = {
 
 export type Route = {
   tier: Tier
-  /** Claude model ID to send the request to. */
+  /** Model ID to send the request to. */
   model: string
-  /** Reasoning effort for `output_config.effort`; null for Haiku, which takes none. */
-  effort: Effort | null
+  /** Reasoning effort: Claude `output_config.effort`, OpenAI `reasoning.effort`. Null means send none. */
+  effort: string | null
   /** Name of the skill Jev picked, or null. */
   skill: string | null
   /** False when Jev couldn't answer and `fallback` was used. */
@@ -154,7 +181,9 @@ export type Route = {
 
 /** A router for one conversation or agent loop. Call `route()` with each new user prompt. */
 export function createRouter(options: RouterOptions) {
-  const models = { ...DEFAULT_MODELS, ...options.models }
+  const preset = PRESETS[options.provider ?? 'anthropic']
+  const models = { ...preset.models, ...options.models }
+  const efforts = { ...preset.efforts, ...options.efforts }
   const holdMs = options.holdMs ?? 10 * 60_000
   const now = options.now ?? Date.now
   const doFetch = options.fetch ?? fetch
@@ -163,7 +192,7 @@ export function createRouter(options: RouterOptions) {
   const result = (tier: Tier, routed: boolean, why: string, skill: string | null = null): Route => ({
     tier,
     model: models[tier],
-    effort: TIER_EFFORT[tier],
+    effort: efforts[tier],
     skill,
     routed,
     why,

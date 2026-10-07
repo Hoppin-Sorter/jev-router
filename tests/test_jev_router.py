@@ -1,6 +1,7 @@
 """Tests for the standalone Python router (lib/jev_router.py): python3 -m unittest discover tests"""
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
@@ -56,6 +57,77 @@ class RouterTest(unittest.TestCase):
         r._post = down
         route = r.route("anything")
         self.assertEqual((route.routed, route.model), (False, "claude-sonnet-5-5"))
+
+
+class OpenAITest(unittest.TestCase):
+    def route(self, tier, **kw):
+        r = Router("k", provider="openai", **kw)
+        r._post = lambda body: answers(tier, 0.0)
+        return r.route("x")
+
+    def test_presets(self):
+        cases = [
+            ({"mechanical": 0.95, "routine": 0.05}, "gpt-6-luna", "low"),
+            ({"routine": 0.9, "complex": 0.1}, "gpt-6.1-sol", "medium"),
+            ({"complex": 0.9, "deep": 0.1}, "gpt-6-astra", "high"),
+            ({"deep": 1.0}, "gpt-6-astra", "xhigh"),
+        ]
+        for tier, model, effort in cases:
+            r = self.route(tier)
+            self.assertEqual((r.model, r.effort), (model, effort))
+
+    def test_overrides(self):
+        r = self.route({"complex": 0.9, "deep": 0.1}, models={"complex": "gpt-6.1-sol"}, efforts={"complex": None})
+        self.assertEqual((r.model, r.effort), ("gpt-6.1-sol", None))
+
+
+class CliTest(unittest.TestCase):
+    def test_codex_argv(self):
+        r = jev_router.Route("routine", "gpt-6.1-sol", "medium", None, True, "")
+        self.assertEqual(
+            jev_router.codex_argv(r, "fix it", interactive=False),
+            ["codex", "exec", "-m", "gpt-6.1-sol", "-c", 'model_reasoning_effort="medium"', "fix it"],
+        )
+        r = jev_router.Route("mechanical", "gpt-6-luna", None, "sql", True, "")
+        argv = jev_router.codex_argv(r, "q", interactive=True)
+        self.assertEqual(argv[:3], ["codex", "-m", "gpt-6-luna"])
+        self.assertNotIn("-c", argv)
+        self.assertIn('"sql" skill', argv[-1])
+
+    def test_load_skills(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "sql"))
+            with open(os.path.join(d, "sql", "SKILL.md"), "w") as f:
+                f.write("---\nname: sql-queries\ndescription: >\n  Write SQL\n  across dialects\n---\nbody")
+            os.makedirs(os.path.join(d, "broken"))
+            with open(os.path.join(d, "broken", "SKILL.md"), "w") as f:
+                f.write("no front matter")
+            self.assertEqual(jev_router.load_skills([d, "/does/not/exist"]), [{"name": "sql-queries", "description": "Write SQL across dialects"}])
+
+    def test_api_key_order(self):
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, ".config", "jev"))
+            with open(os.path.join(home, ".config", "jev", "api_key"), "w") as f:
+                f.write("from-file\n")
+            self.assertEqual(jev_router.load_api_key({}, home), "from-file")
+            self.assertEqual(jev_router.load_api_key({"JEV_API_KEY": "j"}, home), "j")
+            self.assertEqual(jev_router.load_api_key({"JEV_API_KEY": "j", "TYPESAFE_API_KEY": "t"}, home), "t")
+            self.assertIsNone(jev_router.load_api_key({}, os.path.join(home, "nowhere")))
+
+    def test_run_launches_codex_with_the_routed_model(self):
+        launched = []
+        original = jev_router.Router._post
+        jev_router.Router._post = lambda self, body: answers({"routine": 0.9, "complex": 0.1}, 0.0)
+        old = dict(os.environ)
+        os.environ["TYPESAFE_API_KEY"] = "k"
+        try:
+            code = jev_router.main(["--run", "codex-exec", "--skills-dir", "/nowhere", "fix", "the", "bug"], runner=launched.append)
+        finally:
+            jev_router.Router._post = original
+            os.environ.clear()
+            os.environ.update(old)
+        self.assertEqual(code, 0)
+        self.assertEqual(launched, [["codex", "exec", "-m", "gpt-6.1-sol", "-c", 'model_reasoning_effort="medium"', "fix the bug"]])
 
 
 if __name__ == "__main__":

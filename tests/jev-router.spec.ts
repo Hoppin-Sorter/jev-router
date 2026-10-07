@@ -55,3 +55,31 @@ test('Jev down: fallback tier, routed false', async () => {
   assert.equal(r.routed, false)
   assert.equal(r.model, 'claude-sonnet-5-5')
 })
+
+test('openai provider: Luna/Sol/Astra with valid effort pairings', async () => {
+  const cases: Array<[Record<string, number>, string, string]> = [
+    [{ mechanical: 0.95, routine: 0.05 }, 'gpt-6-luna', 'low'],
+    [{ routine: 0.9, complex: 0.1 }, 'gpt-6.1-sol', 'medium'],
+    [{ complex: 0.9, deep: 0.1 }, 'gpt-6-astra', 'high'],
+    [{ deep: 1 }, 'gpt-6-astra', 'xhigh'],
+  ]
+  for (const [tier, model, effort] of cases) {
+    const router = createRouter({ apiKey: 'k', provider: 'openai', fetch: fakeJev({ tier, risky: 0 }).fetch })
+    const r = await router.route('x')
+    assert.equal(r.model, model)
+    assert.equal(r.effort, effort)
+  }
+})
+
+test('models and efforts can be overridden per tier', async () => {
+  const router = createRouter({
+    apiKey: 'k',
+    provider: 'openai',
+    models: { complex: 'gpt-6.1-sol' },
+    efforts: { complex: null },
+    fetch: fakeJev({ tier: { complex: 0.9, deep: 0.1 }, risky: 0 }).fetch,
+  })
+  const r = await router.route('x')
+  assert.equal(r.model, 'gpt-6.1-sol')
+  assert.equal(r.effort, null)
+})
