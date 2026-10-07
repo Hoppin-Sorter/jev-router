@@ -1,0 +1,9 @@
+# written by Claude Code each time it loads the mod
+.claude-plugin/types/
+tsconfig.json
+node_modules/
+.DS_Store
+# never commit a key
+api_key
+*.key
+.env

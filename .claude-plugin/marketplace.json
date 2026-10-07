@@ -1,0 +1,15 @@
+{
+  "name": "jev-router",
+  "description": "Jev-powered model and skill routing for Claude Code.",
+  "owner": {
+    "name": "Ethan Hoppin",
+    "url": "https://github.com/Hoppin-Sorter"
+  },
+  "plugins": [
+    {
+      "name": "jev-router",
+      "description": "Asks Jev before each prompt which Claude model the task needs and which skill (if any) fits, then switches the model and hints the skill.",
+      "source": "./"
+    }
+  ]
+}
