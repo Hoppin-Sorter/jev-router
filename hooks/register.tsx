@@ -1,4 +1,3 @@
-import { atom, read, update } from 'claude-code'
 import type { CommandInfo, EngineInterface, Register } from 'claude-code'
 import {
   buildRequest,
@@ -34,14 +33,15 @@ import {
   type RouterMode,
   type SharedSettings,
 } from '../lib/contract'
-import type { JevUi, LastRoute, Settings } from '../types'
+import type { Settings } from '../types'
 
 // Before each prompt, one Jev request judges how hard the task is, what it is about,
 // what kind of output it wants, and which installed skill (if any) fits. Code then
 // picks the model (a subject specialist such as Fable for hard science, otherwise the
 // tier's model) and, with effort routing on, the reasoning effort, and applies them to
-// every main-loop request of the turn. A control bar above the prompt sets the
-// quality/cost focus, turns features on and off, and nudges the model up or down.
+// every main-loop request of the turn. /jev and the menu bar widget set the quality/cost
+// focus and turn features on and off. The status line under the prompt shows the
+// session is connected from the start, then what Jev picked, or why it didn't.
 // The rubric, thresholds and decisions live in lib/jev-router.ts, shared with agents
 // that use the router outside Claude Code.
 //
@@ -83,22 +83,12 @@ const parseFocus = (v: string): Focus | undefined => {
   return FOCUS_NAMES[v.trim().toLowerCase()]
 }
 
-const ui = atom({ plugin: 'jev-router', key: 'ui' } as const, {
-  mode: 'auto',
-  focus: DEFAULT_FOCUS,
-  settings: { effort: false, skills: true, specialists: true },
-  last: null,
-  expanded: false,
-  hidden: false,
-} as JevUi)
-
 // Session state. The module reloads on a hot reload; session.start restores the
 // person's choices from the store.
 let mode: Mode = 'auto'
 let focus: Focus = DEFAULT_FOCUS
 let settings: Settings = { effort: false, skills: true, specialists: true }
 let active: Active | undefined
-let barHidden = false
 let models: Record<Tier, string> = {
   mechanical: 'claude-haiku-4-5-20251001',
   routine: 'claude-sonnet-5-5',
@@ -273,13 +263,13 @@ async function record($: EngineInterface, decision: DecisionRecord) {
 async function applyShared($: EngineInterface, nudgeOnly = false) {
   const shared = parseSettings((await readFile($, SETTINGS_FILE)) ?? '')
   if (!shared) return
-  let changed = false
   if (!nudgeOnly && shared.updatedAt > seenSettingsAt) {
     seenSettingsAt = shared.updatedAt
     if (shared.mode !== sharedMode(mode)) {
       mode = shared.mode
       active = undefined
       await $.store.set('mode', mode)
+      await $.ui.status(modeStatus())
     }
     if (shared.focus !== focus) {
       focus = shared.focus
@@ -291,7 +281,6 @@ async function applyShared($: EngineInterface, nudgeOnly = false) {
       settings = next
       await $.store.set('settings', settings)
     }
-    changed = true
   }
   const n = shared.nudge
   if (n && n.id !== seenNudge) {
@@ -299,27 +288,16 @@ async function applyShared($: EngineInterface, nudgeOnly = false) {
     await $.store.set('seenNudge', n.id)
     if (n.target && n.target === (await ensureSessionId($))) {
       await nudge($, n.by)
-      return
     }
   }
-  if (changed) await show($, { last: lastRoute() })
 }
 
-/** Pushes the session's choices to the bar and the status line. */
-async function show($: EngineInterface, patch: Partial<JevUi> = {}) {
-  if (patch.hidden !== undefined) barHidden = patch.hidden
-  await update($, ui, s => ({ ...s, ...patch, mode, focus, settings, hidden: barHidden }))
-}
-
-function lastRoute(manual = false): LastRoute | null {
-  if (!active) return null
-  return {
-    model: active.model,
-    tier: active.tier,
-    subject: active.subject,
-    effort: settings.effort && active.effort ? active.effort : undefined,
-    manual,
-  }
+/** The status line for the mode alone, before the first pick or after a mode change. */
+function modeStatus(): string | undefined {
+  if (mode === 'off') return undefined
+  if (mode === 'auto') return 'Jev: auto'
+  if (mode === 'shadow') return 'Jev: shadow (logging only)'
+  return `Jev → ${label(models[mode])} (pinned)`
 }
 
 async function setFocus($: EngineInterface, next: Focus) {
@@ -327,29 +305,24 @@ async function setFocus($: EngineInterface, next: Focus) {
   if (active) active.specialist = false // a held specialist no longer outranks the new focus
   await $.store.set('focus', next)
   await writeShared($)
-  await show($)
 }
 
 async function setMode($: EngineInterface, next: Mode) {
   mode = next
   active = next === 'auto' || next === 'shadow' || next === 'off' ? undefined : { tier: next, model: models[next], effort: TIER_EFFORT[next], at: await $.clock.now(), specialist: false }
   await $.store.set('mode', next)
-  await $.ui.status(
-    next === 'off' ? undefined : next === 'auto' ? 'Jev: auto' : next === 'shadow' ? 'Jev: shadow (logging only)' : `Jev → ${label(models[next])} (pinned)`,
-  )
+  await $.ui.status(modeStatus())
   await writeShared($)
   await writeLast($)
-  await show($, { last: lastRoute() })
 }
 
 async function toggle($: EngineInterface, key: keyof Settings) {
   settings = { ...settings, [key]: !settings[key] }
   await $.store.set('settings', settings)
   await writeShared($)
-  await show($, { last: lastRoute() })
 }
 
-/** The bar's − / + buttons: move this task's model down or up one tier, right away. */
+/** The widget's − / + nudge: move this task's model down or up one tier, right away. */
 async function nudge($: EngineInterface, by: -1 | 1) {
   const from = active?.tier ?? 'routine'
   const tier = TIERS[Math.max(0, Math.min(TIERS.length - 1, rank(from) + by))]!
@@ -369,7 +342,6 @@ async function nudge($: EngineInterface, by: -1 | 1) {
     shadow: mode === 'shadow' || undefined,
     focus,
   })
-  await show($, { last: lastRoute(true) })
 }
 
 export const register: Register = (on, options) => {
@@ -391,7 +363,6 @@ export const register: Register = (on, options) => {
   focus = startFocus
   mode = 'auto'
   active = undefined
-  barHidden = options.focusBar === false
   seenSettingsAt = 0
   sessionId = ''
   lastDecision = null
@@ -407,11 +378,13 @@ export const register: Register = (on, options) => {
     const savedNudge = await $.store.get('seenNudge')
     seenNudge = typeof savedNudge === 'string' ? savedNudge : undefined
     await applyShared($)
-    await show($, { hidden: options.focusBar === false })
+    // Pinned from the start, so a session shows it's connected before the first prompt.
+    const needsKey = mode === 'auto' || mode === 'shadow'
+    await $.ui.status(needsKey && !(await apiKey($)) ? 'Jev: no API key (run /jev)' : modeStatus())
     await $.command.register({
       name: 'jev',
-      description: 'Jev router: status, auto, shadow, off, pin <tier>, reset, focus <0-4>, bar',
-      argumentHint: '[auto | shadow | off | pin <tier> | reset | focus <0-4|name> | bar | effort|skills|specialists on|off]',
+      description: 'Jev router: status, auto, shadow, off, pin <tier>, reset, focus <0-4>',
+      argumentHint: '[auto | shadow | off | pin <tier> | reset | focus <0-4|name> | effort|skills|specialists on|off]',
     })
     return next(e)
   })
@@ -500,7 +473,6 @@ export const register: Register = (on, options) => {
     })
     const summary = `${label(model)}${effort ? ` · ${effort}` : ''}${subject ? ` · ${subject}` : ''}${skill ? ` · /${skill.name}` : ''}`
     await $.ui.status(shadow ? `Jev (shadow) would pick ${summary}` : `Jev → ${summary}`)
-    await show($, { last: { ...lastRoute()!, skill: skill?.name } })
 
     if (!skill || shadow) return next(e)
     const hint =
@@ -534,60 +506,6 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const s = await read($, ui)
-    if (e.props.hasSurvey || s.hidden) return next(e)
-    const { Box, Button, Text } = $.ui.resolve(e)
-    const f = (isFocus(s.focus) ? s.focus : DEFAULT_FOCUS) as Focus
-    const routeText = s.mode === 'off'
-      ? 'off'
-      : s.last && s.mode === 'shadow'
-        ? `shadow: would pick ${label(s.last.model)}`
-        : s.last
-        ? `${label(s.last.model)}${s.last.effort ? ` · ${s.last.effort}` : ''}${s.last.subject ? ` · ${s.last.subject}` : ''}${s.last.manual ? ' (you)' : ''}`
-        : 'waiting for a prompt'
-
-    if (!s.expanded) {
-      return (
-        <Box>
-          <Text dimColor>Jev  {routeText}  ·  {FOCUS_LABELS[f]}  </Text>
-          <Button key="expand" label="Adjust" plain dimColor onPress={() => update($, ui, x => ({ ...x, expanded: true }))} />
-        </Box>
-      )
-    }
-
-    const onOff = (isOn: boolean) => (isOn ? 'on' : 'off')
-    return (
-      <Box flexDirection="column">
-        <Box>
-          <Text dimColor>Focus  Token efficient </Text>
-          {([0, 1, 2, 3, 4] as Focus[]).map(n => (
-            <Button key={`focus-${n}`} label={n === f ? '●' : '○'} plain onPress={() => setFocus($, n)} />
-          ))}
-          <Text dimColor> Task focused  ({FOCUS_LABELS[f]})</Text>
-        </Box>
-        <Box>
-          <Button
-            key="toggle-router"
-            label={`Router ${s.mode === 'off' ? 'off' : s.mode === 'shadow' ? 'shadow' : 'on'}`}
-            dimColor={s.mode === 'off'}
-            onPress={() => setMode($, mode === 'off' ? 'auto' : mode === 'shadow' ? 'off' : 'shadow')}
-          />
-          <Button key="toggle-effort" label={`Effort ${onOff(s.settings.effort)}`} dimColor={!s.settings.effort} onPress={() => toggle($, 'effort')} />
-          <Button key="toggle-skills" label={`Skills ${onOff(s.settings.skills)}`} dimColor={!s.settings.skills} onPress={() => toggle($, 'skills')} />
-          <Button key="toggle-specialists" label={`Specialists ${onOff(s.settings.specialists)}`} dimColor={!s.settings.specialists} onPress={() => toggle($, 'specialists')} />
-          <Text dimColor>  Model </Text>
-          <Button key="model-down" label="−" plain onPress={() => nudge($, -1)} />
-          <Text> {routeText} </Text>
-          <Button key="model-up" label="+" plain onPress={() => nudge($, 1)} />
-          <Text>  </Text>
-          <Button key="collapse" label="Done" plain dimColor onPress={() => update($, ui, x => ({ ...x, expanded: false }))} />
-          <Button key="hide" label="Hide" plain dimColor onPress={() => show($, { hidden: true })} />
-        </Box>
-      </Box>
-    )
-  })
-
   on('command.run', { command: 'jev' }, async ($, e) => {
     const [verb = '', arg = ''] = e.args.trim().toLowerCase().split(/\s+/)
 
@@ -609,7 +527,6 @@ export const register: Register = (on, options) => {
     }
     if (verb === 'reset') {
       active = undefined
-      await show($, { last: null })
       return { text: 'Cleared the held tier: the next prompt is judged fresh.' }
     }
     if (verb === 'focus') {
@@ -618,12 +535,7 @@ export const register: Register = (on, options) => {
         if (n === undefined) return { text: 'Focus is 0-4 or one of: token-efficient, lean, balanced, thorough, task-focused.' }
         await setFocus($, n)
       }
-      await show($, { hidden: false, expanded: true })
-      return { text: `Focus: ${FOCUS_LABELS[focus]} (${focus}). The bar above the prompt has the slider.` }
-    }
-    if (verb === 'bar') {
-      await show($, { hidden: !barHidden, expanded: barHidden })
-      return { text: barHidden ? 'Control bar hidden. /jev bar shows it again.' : 'Control bar shown.' }
+      return { text: `Focus: ${FOCUS_LABELS[focus]} (${focus}).${arg ? '' : ' /jev focus <0-4|name> changes it.'}` }
     }
     if (verb === 'effort' || verb === 'skills' || verb === 'specialists') {
       if (arg !== 'on' && arg !== 'off') return { text: `Use /jev ${verb} on or /jev ${verb} off.` }
@@ -653,7 +565,7 @@ export const register: Register = (on, options) => {
         lines.push(`  ${time}  ${(label(d.model) + effort).padEnd(16)} ${d.skill ? `/${d.skill}  ` : ''}${d.why}${flags}`)
       }
     }
-    lines.push('', 'Commands: /jev auto | shadow | off | pin <tier> | reset | focus <0-4> | bar | effort|skills|specialists on|off')
+    lines.push('', 'Commands: /jev auto | shadow | off | pin <tier> | reset | focus <0-4> | effort|skills|specialists on|off')
     return { text: lines.join('\n') }
   })
 }

@@ -5,7 +5,7 @@ Stop paying top-model prices for "rename this variable." Before each prompt, jev
 1. **What is this task?** How hard it is, what subject it's about (code, science, math, data, writing, business…) and what kind of output it wants.
 2. **Which of your skills, if any, fits?** If one clearly does, the agent is nudged to use it.
 
-From that, code picks the model (a subject specialist where the evidence supports one, like Fable 5.1 for hard science and math), and optionally the reasoning effort. A **focus slider** trades quality against cost. It works with **Claude** and **OpenAI (GPT-6)** models.
+From that, code picks the model (a subject specialist where the evidence supports one, like Fable 5.1 for hard science and math), and optionally the reasoning effort. A **focus** setting (0–4) trades quality against cost. It works with **Claude** and **OpenAI (GPT-6)** models.
 
 One Jev call per prompt, about 0.3 seconds and a fraction of a cent.
 
@@ -92,19 +92,23 @@ And at every focus level:
 - **Routed:** prompts you type, prompts from the Agent SDK, and the prompts scheduled routines fire.
 - **Not routed:** slash commands, background notifications, and subagents (they keep their own model).
 
-## The control bar
+## Is this session using Jev?
 
-The plugin draws one line above the prompt with the current pick and focus. **Adjust** opens the controls:
+Look under the prompt. The plugin pins one status line there as soon as a session starts:
 
-```
-Focus  Token efficient ○ ○ ● ○ ○ Task focused  (Balanced)
-[ Router on ] [ Effort off ] [ Skills on ] [ Specialists on ]   Model − Opus 5.5 · science +   Done  Hide
-```
+| Status line | Means |
+|---|---|
+| `Jev: auto` | Connected, waiting for the first prompt |
+| `Jev → Sonnet 5.5 · data · /data:sql-queries` | Jev's pick for this task: model, effort if routed, subject, skill hint |
+| `Jev (shadow) would pick Haiku 4.5` | Shadow mode: logged, nothing switched |
+| `Jev → Opus 5.5 (pinned)` / `(you)` | A tier you pinned, or a model you nudged |
+| `Jev: no API key (run /jev)` | Installed, but it can't ask Jev, so your model is left alone |
+| `Jev: timed out; kept Opus 5.5` | Jev didn't answer in time this prompt; the model stayed as it was |
+| nothing | The router is off. If `/jev` isn't a command either, the plugin isn't installed in this session |
 
-- **Focus dots** set the quality/cost trade-off. Your choice is remembered across sessions.
-- **Router** steps through on → shadow → off. **Effort / Skills / Specialists** turn each feature on or off.
-- **Model − / +** moves this task's model down or up one tier right away, mid-turn included. Routing picks up again with the next task.
-- **Hide** removes the bar; `/jev bar` brings it back. Set `focusBar` to `false` to start with it hidden.
+`/jev` gives the full picture: mode, focus, where the key was found and the last 10 decisions.
+
+Change focus, mode and the switches with [`/jev`](#commands) or the [menu bar widget](#menu-bar-widget-macos). Your choices are remembered across sessions and shared through `~/.config/jev/settings.json`. The widget's **− / +** moves a session's model down or up one tier right away, mid-turn included; routing picks up again with the next task.
 
 **Shadow mode** asks Jev and logs what it would pick, but leaves the session's model alone and hints no skill. Use it to see how routing would behave before you let it switch anything. It still costs one Jev call per prompt.
 
@@ -115,10 +119,10 @@ Focus  Token efficient ○ ○ ● ○ ○ Task focused  (Balanced)
 - **Menu bar:** an icon and the model family, like `⑂ Sonnet`. The icon is an eye in shadow mode and a pause sign when the router is off.
 - **Off / Shadow / On** at the top of the panel.
 - **Now:** the latest pick (model, tier, subject, effort, skill), Jev's confidence and latency, and whether that session is working or idle and for how long. **− / +** move that session's model down or up one tier on its next request.
-- **Focus:** the same 5-step slider as the control bar, from Token efficient to Task focused, plus the Effort, Skills and Specialists switches.
+- **Focus:** a 5-step slider from Token efficient to Task focused, like `/jev focus`, plus the Effort, Skills and Specialists switches.
 - **Saved:** for Today, 7 days or 30 days, what your Claude Code requests were worth at API list prices, against the same tokens all on Opus 5.5, minus what Jev cost, with a bar showing the model mix. These are list-price values; a Pro or Max plan bills differently.
 - **Recent:** the last five decisions. Never your prompt text.
-- **⋯ menu:** **Customize** shows or hides each card, and turns on the optional **Water & CO₂** line (below). **Pop out** opens a small floating pill (model, focus, today's savings) that stays on top on every Space; drag it anywhere.
+- **⋯ menu:** **Customize** shows or hides each card, and turns on the optional **Water & CO₂** line (below). **Pop out** opens a small floating pill (model, focus, today's savings) that stays on top on every Space; drag it anywhere. **Floating icon** puts a small Jev icon on screen; park it just above Claude's reply box, say. It belongs to the Claude app's window: it shows only while Claude is in front, moves and resizes with that window, and disappears when you switch to Safari or anything else. It can't tell a Code session from a chat, since macOS doesn't give other apps a window's title without Screen Recording access. **Only show over Claude** turns that off, and the icon then stays on top on every Space. Click it and it turns into an X with a dial above it: drag the focus slider (Task focused at the top, Token efficient at the bottom) and click the circles to switch the router (on → shadow → off), effort, skills and specialists. Click the X to close it, drag the icon to move it. It's off until you turn it on.
 
 The widget is never built for you. Installing the plugin doesn't build it, and nothing in jev-router runs the build script on its own. When you want it, build it yourself (needs Xcode or the Command Line Tools, Swift 5.9+):
 
@@ -135,7 +139,14 @@ The app is signed ad hoc, not notarized. If macOS blocks the first launch, Contr
 
 ### Water & CO₂ (optional)
 
-Turn on **⋯ → Customize → Water & CO₂ (estimate)** for one small line under **Saved**, like `🍃 Saved ≈ 0.37 mL water · ≈ 136 mg CO₂e`. It's off by default and display only: the router never reads it, so it has no effect on which model Jev picks.
+Turn on **⋯ → Customize → Water & CO₂ (estimate)** for a small note under **Saved**, like:
+
+```
+🍃 Saved ≈ 0.37 mL water · ≈ 136 mg CO₂e in 30 days
+   ≈ 0.34 Wh, like an LED bulb on for 2 min
+```
+
+It's off by default and display only: the router never reads it, so it has no effect on which model Jev picks. It covers the last 30 days unless you pick another window under **⋯ → Customize → Water & CO₂ over**; it doesn't follow the Saved picker, because one day's figure is usually too small to mean much. The second line compares the energy to something everyday: minutes of a 10 W LED bulb below 15 Wh, phone charges (about 15 Wh each) from there up.
 
 It's a rough estimate. Anthropic doesn't publish per-model energy figures, so it treats API list price as a stand-in for compute and converts the dollars saved:
 
@@ -145,7 +156,7 @@ It's a rough estimate. Anthropic doesn't publish per-model energy figures, so it
 | Water | 1.1 L per kWh | [Google's Gemini figures](https://cloud.google.com/blog/products/infrastructure/measuring-the-environmental-impact-of-ai-inference) (0.26 mL per 0.24 Wh, data-center cooling only) |
 | CO₂e | 0.4 kg per kWh | about the US grid average (location-based; providers buying clean power report less) |
 
-Hover over the line for the energy figure. When routing cost more than Opus 5.5 would have (say, a lot of Fable), it reads **Used** instead of **Saved**. The factors live in `widget/Sources/JevCore/Impact.swift`.
+Hover over the note for the assumptions. When routing cost more than Opus 5.5 would have (say, a lot of Fable), it reads **Used** instead of **Saved**. The factors live in `widget/Sources/JevCore/Impact.swift`.
 
 ### How the widget and the plugin talk
 
@@ -153,7 +164,7 @@ Through three small files in `~/.config/jev/`. There's no server and nothing lea
 
 | File | Written by | Holds |
 |---|---|---|
-| `settings.json` | both | mode (`auto`, `shadow` or `off`), focus 0–4, the effort/skills/specialists switches, a one-shot `nudge` for one session, and `updatedAt`. The newer write wins, so the control bar, `/jev` and the widget stay in sync. |
+| `settings.json` | both | mode (`auto`, `shadow` or `off`), focus 0–4, the effort/skills/specialists switches, a one-shot `nudge` for one session, and `updatedAt`. The newer write wins, so `/jev`, the widget and other sessions stay in sync. |
 | `last.json` | plugin | the latest decision, the session it came from, and whether that session is working |
 | `decisions.jsonl` | plugin | one decision per line, newest last, trimmed to about 500 lines. Model, tier, subject, skill, confidence, latency and Jev cost. **No prompt text.** |
 
@@ -169,17 +180,15 @@ The **Saved** card reads token usage from Claude Code's own transcripts in `~/.c
 | `/jev pin <tier>` | Force one tier (skill hints keep running) |
 | `/jev reset` | Forget the held tier; judge the next prompt fresh |
 | `/jev focus <0-4 or name>` | Set focus: token-efficient, lean, balanced, thorough, task-focused |
-| `/jev bar` | Show or hide the control bar |
 | `/jev effort\|skills\|specialists on\|off` | Turn one feature on or off |
 
 ## Config
 
-Set in `/plugin configure jev-router@jev-router`. The control bar's choices override these once you use it.
+Set in `/plugin configure jev-router@jev-router`. Choices made with `/jev` or the widget override these once you use them.
 
 | Option | Default | |
 |---|---|---|
-| `focus` | `balanced` | Starting focus until you move the slider. |
-| `focusBar` | `true` | Show the control bar above the prompt. |
+| `focus` | `balanced` | Starting focus until you change it. |
 | `deepModel` | `claude-opus-5-5` | Model for the deepest tier on every subject. Set `claude-fable-5-1` for a stronger (and pricier) top tier everywhere. |
 | `skillHints` | `true` | Tell Claude which installed skill Jev picked. |
 | `effortRouting` | `false` | Also set reasoning effort (see above). Haiku takes none. Off keeps your session's effort. |
@@ -194,7 +203,11 @@ python3 eval/run_eval.py --limit 4          # a small first run
 python3 eval/run_eval.py --subjects science,math --judge fable
 ```
 
-It writes `eval/results/summary.md` and `suggested-specialists.json`, which you paste into `CLAUDE_SPECIALISTS` in `lib/jev-router.ts` and `lib/jev_router.py`. The full set is 140 calls, about $8 at API prices, or a share of your plan's limits when your CLI is signed in to a Claude plan. Runs use `--bare` and no tools, so the router itself doesn't steer them. Swap in your own prompts for the best results. A judge can favor answers like its own, so try a second `--judge`.
+It writes `eval/results/summary.md` and `suggested-specialists.json`, which you paste into `CLAUDE_SPECIALISTS` in `lib/jev-router.ts` and `lib/jev_router.py`. The full set is 140 calls, about $8 at API prices, or a share of your plan's limits when your CLI is signed in to a Claude plan. Runs load no settings, plugins, hooks, MCP servers or skills, and use no tools, so the router itself doesn't steer them; that works with a Claude plan sign-in or an API key. Opus 5.5 needs Claude Code 2.1.280 or newer; point `--claude-bin` at a newer CLI if yours is older. `--jobs 6` works on six prompts at once, and `--resume` picks up a run that stopped. Swap in your own prompts for the best results.
+
+A judge can favor answers like its own, so grade the same answers again with another one: `python3 eval/rejudge.py --answers eval/results/answers.jsonl --judge sonnet` writes `rejudge-sonnet.jsonl` and prints each model's average under both judges. It makes only judge calls, so it costs a fraction of the first run.
+
+`eval/usecases.jsonl` is a larger set to pass with `--prompts`: 143 prompts across 13 areas (coding, app building, design, visuals, generative art, data, strategy, law, writing, science and math, operations, everyday, risky operations), each labelled with a difficulty. `node eval/jev_readings.ts --skills skills.json` uses the same set for a different check: it sends the prompts to the live Jev API and compares Jev's difficulty, subject, risk and skill answers with the labels, for about 4 cents (`--dry-run` shows the estimate first). `skills.json` is a list of `{ "name", "description" }` for the skills your sessions offer.
 
 ## Use with the Claude Agent SDK
 
