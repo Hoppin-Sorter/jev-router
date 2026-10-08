@@ -57,6 +57,28 @@ public struct Impact: Equatable, Sendable {
         return "≈ \(sign)\(String(format: v >= 10 ? "%.0f" : "%.2f", v)) Wh"
     }
 
+    /// A 60 W-equivalent LED bulb draws about 10 W.
+    public static let ledBulbWatts = 10.0
+    /// A full charge of a recent phone takes about 15 Wh from the wall: a 13–17 Wh battery
+    /// plus charger losses.
+    public static let phoneChargeWh = 15.0
+
+    /// An everyday comparison for an amount of energy: "like an LED bulb on for 2 min" below one
+    /// phone charge, "like 1.3 phone charges" from there up, nil for nothing. Uses the size only;
+    /// the caller says whether it was saved or used.
+    public static func everyday(_ wh: Double) -> String? {
+        let v = abs(wh)
+        guard v > 0 else { return nil }
+        if v < phoneChargeWh {
+            let minutes = v / ledBulbWatts * 60
+            return minutes < 1 ? "like an LED bulb on for under a minute" : "like an LED bulb on for \(Int(minutes.rounded())) min"
+        }
+        let charges = v / phoneChargeWh
+        let rounded = charges < 10 ? (charges * 10).rounded() / 10 : charges.rounded()
+        let shown = String(format: rounded == rounded.rounded() ? "%.0f" : "%.1f", rounded)
+        return "like \(shown) phone charge\(shown == "1" ? "" : "s")"
+    }
+
     /// Picks the largest unit the value reaches (the last one otherwise).
     private static func approx(_ value: Double, units: [(scale: Double, name: String)]) -> String {
         let v = abs(value)
@@ -71,4 +93,10 @@ public struct Impact: Equatable, Sendable {
 public extension SavingsSummary {
     /// The estimated energy, water and CO₂ behind `saved` (negative when routing cost more).
     var impactSaved: Impact { Impact(usd: saved) }
+}
+
+public extension SavingsWindow {
+    /// The water and CO₂ line covers 30 days unless the person picks another window: one day's
+    /// figure is usually too small to mean much.
+    static let impactDefault: SavingsWindow = .month
 }

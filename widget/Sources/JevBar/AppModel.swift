@@ -29,6 +29,8 @@ final class AppModel {
     /// The optional water and CO₂ estimate under Saved. Off until the person turns it on;
     /// display only, never sent anywhere or read by the router.
     private(set) var showImpact: Bool
+    /// The window that line covers, separate from the Saved picker.
+    private(set) var impactWindow: SavingsWindow
 
     let store = ConfigStore()
     @ObservationIgnored private var decisions: [Decision] = []
@@ -44,6 +46,7 @@ final class AppModel {
     init() {
         hiddenCards = Set(UserDefaults.standard.stringArray(forKey: "hiddenCards") ?? [])
         showImpact = UserDefaults.standard.bool(forKey: "showImpact")
+        impactWindow = UserDefaults.standard.string(forKey: "impactWindow").flatMap(SavingsWindow.init(rawValue:)) ?? .impactDefault
         refresh()
         let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -81,10 +84,9 @@ final class AppModel {
         Task.detached(priority: .utility) {
             let now = Date()
             let usage = scanner.scan(since: SavingsWindow.month.start(now: now))
-            var result: [SavingsWindow: SavingsSummary] = [:]
-            for w in SavingsWindow.allCases {
-                result[w] = SavingsSummary.make(usage: usage, decisions: decisions, window: w, now: now)
-            }
+            let result = Dictionary(uniqueKeysWithValues: SavingsWindow.allCases.map {
+                ($0, SavingsSummary.make(usage: usage, decisions: decisions, window: $0, now: now))
+            })
             await MainActor.run {
                 self.savings = result
                 self.savingsUpdated = now
@@ -154,5 +156,10 @@ final class AppModel {
     func setShowImpact(_ on: Bool) {
         showImpact = on
         UserDefaults.standard.set(on, forKey: "showImpact")
+    }
+
+    func setImpactWindow(_ w: SavingsWindow) {
+        impactWindow = w
+        UserDefaults.standard.set(w.rawValue, forKey: "impactWindow")
     }
 }

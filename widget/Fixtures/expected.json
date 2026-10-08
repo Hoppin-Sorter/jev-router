@@ -109,7 +109,8 @@
       "waterL": -0.0022654632,
       "co2Kg": -0.0008238048,
       "water": "≈ −2.3 mL",
-      "co2": "≈ −824 mg"
+      "co2": "≈ −824 mg",
+      "everyday": "like an LED bulb on for 12 min"
     },
     "30 days": {
       "saved": 0.0056496,
@@ -117,7 +118,8 @@
       "waterL": 0.0003728736,
       "co2Kg": 0.0001355904,
       "water": "≈ 0.37 mL",
-      "co2": "≈ 136 mg"
+      "co2": "≈ 136 mg",
+      "everyday": "like an LED bulb on for 2 min"
     }
   }
 }

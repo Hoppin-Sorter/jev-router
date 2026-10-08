@@ -4,6 +4,9 @@ import SwiftUI
 struct PanelView: View {
     let model: AppModel
     let pill: PillController
+    let launcher: LauncherController
+    /// The menu bar window this panel is drawn in, for the close button.
+    @State private var window: NSWindow?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -22,6 +25,7 @@ struct PanelView: View {
         }
         .padding(12)
         .frame(width: 340)
+        .background(WindowReader { window = $0 })
     }
 
     private var header: some View {
@@ -41,9 +45,16 @@ struct PanelView: View {
                         Toggle(card.rawValue, isOn: Binding(get: { model.isVisible(card) }, set: { model.setVisible(card, $0) }))
                     }
                     Toggle("Water & CO₂ (estimate)", isOn: Binding(get: { model.showImpact }, set: { model.setShowImpact($0) }))
+                    Picker("Water & CO₂ over", selection: Binding(get: { model.impactWindow }, set: { model.setImpactWindow($0) })) {
+                        ForEach(SavingsWindow.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .disabled(!model.showImpact)
                 }
                 Divider()
                 Button(pill.isShown ? "Close pop-out" : "Pop out") { pill.toggle(model: model) }
+                Toggle("Floating icon", isOn: Binding(get: { launcher.isShown }, set: { _ in launcher.toggle(model: model) }))
+                Toggle("Only show over Claude", isOn: Binding(get: { launcher.onlyInClaude }, set: { launcher.setOnlyInClaude($0) }))
+                    .disabled(!launcher.isShown)
                 Button("Refresh savings") { model.refreshSavings() }
                 Button("Open ~/.config/jev") { NSWorkspace.shared.open(model.store.dir) }
                 Divider()
@@ -54,6 +65,34 @@ struct PanelView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            Button { window?.close() } label: { Image(systemName: "xmark.circle.fill") }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Close")
+        }
+    }
+}
+
+/// Hands over the window a view ends up in. The menu bar's window has no close button of its own.
+private struct WindowReader: NSViewRepresentable {
+    let found: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = ReaderView()
+        view.found = found
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class ReaderView: NSView {
+        var found: (NSWindow?) -> Void = { _ in }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // This can run while SwiftUI is still drawing, where setting state is not allowed.
+            let window = window
+            DispatchQueue.main.async { [found] in found(window) }
         }
     }
 }
@@ -215,8 +254,8 @@ struct SavedCard: View {
                     MixBar(mix: s.mix, total: s.requests)
                 }
                 Text(footnote(s)).font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                if model.showImpact {
-                    ImpactLine(summary: s)
+                if model.showImpact, let impact = model.savings[model.impactWindow] {
+                    ImpactLine(summary: impact, window: model.impactWindow)
                 }
             } else {
                 Text("Reading Claude Code transcripts…").font(.caption).foregroundStyle(.secondary)
@@ -238,17 +277,25 @@ struct SavedCard: View {
     }
 }
 
-/// The optional, low-key estimate of water and CO₂ behind the savings. Display only.
+/// The optional, low-key estimate of water and CO₂ behind the savings, with an everyday
+/// comparison for the energy. Display only.
 struct ImpactLine: View {
     let summary: SavingsSummary
+    let window: SavingsWindow
 
     var body: some View {
         let impact = summary.impactSaved
         let more = summary.saved < 0
-        HStack(spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: "leaf").foregroundStyle(.secondary)
-            Text("\(more ? "Used" : "Saved") \(Impact.water(abs(impact.waterL))) water · \(Impact.co2(abs(impact.co2Kg))) CO₂e")
-                .monospacedDigit()
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(more ? "Used" : "Saved") \(Impact.water(abs(impact.waterL))) water · \(Impact.co2(abs(impact.co2Kg))) CO₂e \(span)")
+                if let like = Impact.everyday(impact.energyWh) {
+                    Text("\(Impact.energy(abs(impact.energyWh))), \(like)")
+                }
+            }
+            .monospacedDigit()
+            .fixedSize(horizontal: false, vertical: true)
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
@@ -256,9 +303,18 @@ struct ImpactLine: View {
             "A rough estimate, not a measurement. It assumes energy tracks API list price "
                 + "(about 60 Wh per dollar, from Epoch AI's estimate for a typical GPT-4o query), "
                 + "1.1 L of cooling water per kWh (Google's Gemini figures) and 0.4 kg CO₂e per kWh "
-                + "(about the US grid average). \(Impact.energy(impact.energyWh)) of energy. "
+                + "(about the US grid average). Comparisons use a 10 W LED bulb and about 15 Wh per "
+                + "phone charge. Change the window under ⋯ → Customize. "
                 + "It has no effect on which model Jev picks."
         )
+    }
+
+    private var span: String {
+        switch window {
+        case .today: return "today"
+        case .week: return "in 7 days"
+        case .month: return "in 30 days"
+        }
     }
 }
 
@@ -290,11 +346,13 @@ struct MixBar: View {
             }
             .frame(height: 8)
             .clipShape(Capsule())
-            HStack(spacing: 8) {
+            // Wraps: over 30 days five or six models don't fit on one line.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8, alignment: .leading)], alignment: .leading, spacing: 2) {
                 ForEach(mix, id: \.key) { slice in
                     HStack(spacing: 3) {
                         Circle().fill(Self.color(slice.key)).frame(width: 6, height: 6)
                         Text("\(slice.name) \(Int((Double(slice.requests) * 100 / Double(max(total, 1))).rounded()))%")
+                            .lineLimit(1)
                     }
                 }
             }
