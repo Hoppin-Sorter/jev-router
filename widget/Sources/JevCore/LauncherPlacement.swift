@@ -56,12 +56,30 @@ public enum LauncherPlacement {
         CGRect(x: rect.minX, y: mainDisplayHeight - rect.maxY, width: rect.width, height: rect.height)
     }
 
-    /// Whether the icon is on screen. Confined, it shows only while Claude is the front app and
-    /// has a window to float over. While Jev Bar itself is in front, say its menu bar panel is
-    /// open, nothing changes, so using Jev Bar doesn't make the icon blink away.
-    public static func shouldShow(confined: Bool, claudeFrontmost: Bool, ownAppFrontmost: Bool, hasWindow: Bool, wasShowing: Bool) -> Bool {
+    /// Whether the icon is on screen. Confined, it shows only while Claude is the front app, has
+    /// a window to float over, and that window shows a Claude Code session (not a chat). While
+    /// Jev Bar itself is in front, say its menu bar panel is open, nothing changes, so using Jev
+    /// Bar doesn't make the icon blink away.
+    public static func shouldShow(confined: Bool, claudeFrontmost: Bool, ownAppFrontmost: Bool, hasWindow: Bool, inCodeSession: Bool = true, wasShowing: Bool) -> Bool {
         if !confined { return true }
         if ownAppFrontmost { return wasShowing }
-        return claudeFrontmost && hasWindow
+        return claudeFrontmost && hasWindow && inCodeSession
+    }
+
+    /// The Claude app names its page "<session> - Claude Code" in the Code tab; a chat's name ends
+    /// in "- Claude" alone. Read through Accessibility, since the window's own title is just "Claude".
+    public static func isCodeSession(pageTitle: String) -> Bool {
+        pageTitle.hasSuffix(" - Claude Code")
+    }
+
+    /// The session's own area in the window: right of the sidebar's resize handle when the sidebar
+    /// is open, and left of a side pane's handle (terminal, preview) when one is open. A missing
+    /// handle, or one that doesn't sit where a sidebar or pane would, leaves that edge at the window's.
+    public static func sessionArea(window: CGRect, sidebarHandle: CGRect?, paneHandle: CGRect? = nil) -> CGRect {
+        var minX = window.minX, maxX = window.maxX
+        if let h = sidebarHandle, h.maxX > window.minX + 40, h.maxX < window.midX { minX = h.maxX }
+        if let h = paneHandle, h.minX > window.midX, h.minX < window.maxX - 40 { maxX = h.minX }
+        guard maxX - minX >= minimumWindow.width / 2 else { return window }
+        return CGRect(x: minX, y: window.minY, width: maxX - minX, height: window.height)
     }
 }

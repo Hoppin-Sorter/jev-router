@@ -55,6 +55,9 @@ struct PanelView: View {
                 Toggle("Floating icon", isOn: Binding(get: { launcher.isShown }, set: { _ in launcher.toggle(model: model) }))
                 Toggle("Only show over Claude", isOn: Binding(get: { launcher.onlyInClaude }, set: { launcher.setOnlyInClaude($0) }))
                     .disabled(!launcher.isShown)
+                if launcher.isShown, launcher.onlyInClaude, !ClaudeLayout.isTrusted {
+                    Button("Allow Accessibility access…") { ClaudeLayout.askForAccess() }
+                }
                 Button("Refresh savings") { model.refreshSavings() }
                 Button("Open ~/.config/jev") { NSWorkspace.shared.open(model.store.dir) }
                 Divider()

@@ -8,10 +8,12 @@ import SwiftUI
 /// switches for the router, effort, skills and specialists. Drag the icon to move it.
 /// Off until it's turned on under ⋯ → Floating icon, and remembered after that.
 ///
-/// By default it belongs to the Claude window: it shows only while the Claude app is in front,
-/// moves and resizes with that window, and is gone when you switch to another app. It can't tell
-/// a Code session from a chat, since macOS gives other apps a window's size and place but not its
-/// title without Screen Recording access. ⋯ → Only show over Claude turns the confinement off.
+/// By default it belongs to the Claude Code session on screen: it shows only while the Claude app
+/// is in front with a Code session open (not a chat), keeps to that session's area right of the
+/// sidebar (and left of a side pane), follows it when the window moves or the sidebar collapses,
+/// and is gone in any other app. Telling a session from a chat, and finding the sidebar, takes
+/// Accessibility access (ClaudeLayout); without it the icon keeps to the whole Claude window in
+/// every tab. ⋯ → Only show over Claude turns the confinement off.
 @MainActor
 @Observable
 final class LauncherController {
@@ -21,8 +23,10 @@ final class LauncherController {
     @ObservationIgnored private var panel: NSPanel?
     @ObservationIgnored private var dial: NSPanel?
     @ObservationIgnored private var tracker: Timer?
-    /// Claude's conversation window in AppKit screen coordinates, as of the last look.
+    /// The area the icon keeps to, in AppKit screen coordinates, as of the last look: the Code
+    /// session's part of Claude's window, or the whole window without Accessibility access.
     @ObservationIgnored private var claudeWindow: CGRect?
+    @ObservationIgnored private let layout = ClaudeLayout()
     @ObservationIgnored private var anchor = LauncherController.savedAnchor()
     private(set) var isShown = false
     private(set) var isOpen = false
@@ -99,7 +103,7 @@ final class LauncherController {
 
     func setOnlyInClaude(_ on: Bool) {
         // Turning it on with the icon already over Claude keeps it there.
-        if on, let panel, let window = Self.claudeWindowNow(), window.intersects(panel.frame) {
+        if on, let panel, let window = Self.claudeWindowNow()?.frame, window.intersects(panel.frame) {
             anchor = LauncherPlacement.anchor(of: panel.frame, in: window)
             saveAnchor()
         }
@@ -129,12 +133,24 @@ final class LauncherController {
     private func refresh() {
         guard let panel else { return }
         let front = NSWorkspace.shared.frontmostApplication
-        claudeWindow = onlyInClaude ? Self.claudeWindowNow() : nil
+        var inCodeSession = true
+        claudeWindow = nil
+        if onlyInClaude, let (pid, window) = Self.claudeWindowNow() {
+            layout.refresh(pid: pid)
+            claudeWindow = window
+            // Without Accessibility access (or before the first reading) it can't tell, so it shows.
+            if let page = layout.latest, let mainDisplay = NSScreen.screens.first {
+                let flip = { (r: CGRect) in LauncherPlacement.appKitRect(fromCG: r, mainDisplayHeight: mainDisplay.frame.height) }
+                inCodeSession = LauncherPlacement.isCodeSession(pageTitle: page.pageTitle)
+                claudeWindow = LauncherPlacement.sessionArea(window: window, sidebarHandle: page.sidebarHandle.map(flip), paneHandle: page.paneHandle.map(flip))
+            }
+        }
         let showing = LauncherPlacement.shouldShow(
             confined: onlyInClaude,
             claudeFrontmost: front?.bundleIdentifier == Self.claudeBundleID,
             ownAppFrontmost: front?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
             hasWindow: claudeWindow != nil,
+            inCodeSession: inCodeSession,
             wasShowing: panel.isVisible
         )
         if showing {
@@ -174,7 +190,8 @@ final class LauncherController {
         return LauncherPlacement.Anchor(x: defaults.double(forKey: "launcherAnchorX"), fromBottom: defaults.double(forKey: "launcherAnchorFromBottom"))
     }
 
-    private static func claudeWindowNow() -> CGRect? {
+    /// Claude's process and its front conversation window, in AppKit screen coordinates.
+    private static func claudeWindowNow() -> (pid: pid_t, frame: CGRect)? {
         guard let pid = NSRunningApplication.runningApplications(withBundleIdentifier: claudeBundleID).first?.processIdentifier else { return nil }
         let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         // Front to back, ordinary windows only (layer 0), so a stray invisible one doesn't count.
@@ -186,7 +203,7 @@ final class LauncherController {
             return CGRect(dictionaryRepresentation: bounds as CFDictionary)
         }
         guard let window = LauncherPlacement.mainWindow(among: windows), let mainDisplay = NSScreen.screens.first else { return nil }
-        return LauncherPlacement.appKitRect(fromCG: window, mainDisplayHeight: mainDisplay.frame.height)
+        return (pid, LauncherPlacement.appKitRect(fromCG: window, mainDisplayHeight: mainDisplay.frame.height))
     }
 
     private func makeDial(model: AppModel) -> NSPanel {

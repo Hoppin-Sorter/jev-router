@@ -203,6 +203,23 @@ do {
     check(show(true, claude: false, own: true, was: true), "Jev Bar in front keeps it shown")
     check(!show(true, claude: false, own: true, was: false), "Jev Bar in front keeps it hidden")
     check(show(false, claude: false, window: false) && show(false, claude: false), "not confined: always shown")
+    check(!P.shouldShow(confined: true, claudeFrontmost: true, ownAppFrontmost: false, hasWindow: true, inCodeSession: false, wasShowing: true), "Claude in front on a chat: hidden")
+
+    // Code tab or chat, from the page's name.
+    check(P.isCodeSession(pageTitle: "jev-router setup - Claude Code"), "a Code session")
+    check(!P.isCodeSession(pageTitle: "Trip ideas - Claude") && !P.isCodeSession(pageTitle: "Claude Code tips - Claude"), "a chat, even one about Claude Code")
+
+    // The session's area: right of the sidebar handle (AppKit coordinates, the probe's real window).
+    let handle = CGRect(x: 258, y: 0, width: 14, height: 949)
+    check(P.sessionArea(window: full, sidebarHandle: handle) == CGRect(x: 272, y: 0, width: 1240, height: 949), "right of the sidebar")
+    check(P.sessionArea(window: full, sidebarHandle: nil) == full, "sidebar collapsed: the whole window")
+    check(P.sessionArea(window: full, sidebarHandle: CGRect(x: 0, y: 0, width: 14, height: 949)) == full, "a handle at the very left counts as collapsed")
+    check(P.sessionArea(window: full, sidebarHandle: CGRect(x: 1400, y: 0, width: 14, height: 949)) == full, "a handle on the right isn't the sidebar's")
+    let pane = CGRect(x: 1100, y: 0, width: 14, height: 949)
+    check(P.sessionArea(window: full, sidebarHandle: handle, paneHandle: pane) == CGRect(x: 272, y: 0, width: 828, height: 949), "left of an open side pane")
+    check(P.sessionArea(window: full, sidebarHandle: nil, paneHandle: pane).minX == 0, "a pane with the sidebar collapsed")
+    let inArea = P.frame(for: .standard, size: size, in: P.sessionArea(window: full, sidebarHandle: handle))
+    check(inArea.minX >= 272 && inArea.midX == 272 + 620, "the icon centres in the session area, not the window")
 }
 
 try? FileManager.default.removeItem(at: scratch)
