@@ -10,9 +10,11 @@ specialists table to paste into lib/jev-router.ts and lib/jev_router.py.
     python3 eval/run_eval.py --dry-run            # plan and rough cost, no calls
     python3 eval/run_eval.py --limit 4            # a small first run
     python3 eval/run_eval.py --subjects science,math
+    python3 eval/run_eval.py --jobs 6 --resume    # 6 prompts at once; skip prompts already answered
 
-Runs use `--bare` (so no plugins, including jev-router, steer them) and no tools,
-so every model answers the same plain question. Standard library only.
+Runs load no settings, plugins, hooks, MCP servers or skills (so nothing, including
+jev-router, steers them), use no tools, and start in an empty folder, so every model
+answers the same plain question. Standard library only.
 """
 
 from __future__ import annotations
@@ -24,7 +26,10 @@ import random
 import re
 import subprocess
 import sys
+import tempfile
+import threading
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 
 # Claude API model IDs and $ per million input/output tokens (Anthropic's pricing page, October 2026).
@@ -54,11 +59,21 @@ Question:
 Reply with only a JSON object, no other text, like: {{"A": {{"score": 7, "why": "one short sentence"}}, "B": {{"score": 9, "why": "..."}}}}"""
 
 
+# An empty folder to run in, so no project's CLAUDE.md or memory is picked up.
+ISOLATED_CWD = tempfile.mkdtemp(prefix="jev-eval-")
+# What --bare would skip, without --bare: it only takes an API key, and this way a Claude
+# subscription sign-in works too. With no settings loaded, no plugin is enabled, jev-router
+# included; left on, it would switch the model these runs ask for.
+ISOLATION = ["--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence", "--tools", ""]
+# With no tools, a model asked to edit code sometimes tries to call one anyway and the run fails.
+NO_TOOLS = "You have no tools and no access to files. Answer in your reply alone, with any code written out in full in the reply."
+
+
 def call_claude(binary: str, model: str, prompt: str, timeout: int = 900) -> dict:
-    """One headless Claude run: no plugins, no tools, no saved session. Returns text and cost."""
-    argv = [binary, "-p", "--bare", "--no-session-persistence", "--tools", "", "--model", model, "--output-format", "json", prompt]
+    """One headless Claude run: no plugins, hooks, MCP servers, skills or tools, and no saved session. Returns text and cost."""
+    argv = [binary, "-p", *ISOLATION, "--append-system-prompt", NO_TOOLS, "--model", model, "--output-format", "json", prompt]
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=ISOLATED_CWD)
     except (OSError, subprocess.TimeoutExpired) as err:
         return {"text": "", "cost": None, "error": str(err)}
     try:
@@ -177,6 +192,8 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--dry-run", action="store_true", help="show the plan and a rough cost, make no calls")
     ap.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    ap.add_argument("--jobs", type=int, default=1, help="prompts to work on at once (each runs its models one after another)")
+    ap.add_argument("--resume", action="store_true", help="keep answers.jsonl in --out and skip the prompts it already has")
     args = ap.parse_args(argv)
 
     models = [m.strip() for m in args.models.split(",") if m.strip()]
@@ -193,6 +210,22 @@ def main(argv: Optional[list] = None) -> int:
     if not prompts:
         ap.error("no prompts selected")
 
+    done_rows: List[dict] = []
+    log_path = os.path.join(args.out, "answers.jsonl")
+    if args.resume and os.path.exists(log_path):
+        with open(log_path) as f:
+            logged = [json.loads(line) for line in f if line.strip()]
+        # A prompt counts as done only when every model answered it; the rest run again.
+        by_prompt: Dict[str, set] = defaultdict(set)
+        for r in logged:
+            by_prompt[r["prompt"]].add(r["model"])
+        answered = {p for p, ms in by_prompt.items() if set(models) <= ms}
+        done_rows = [r for r in logged if r["prompt"] in answered]
+        with open(log_path, "w") as f:
+            f.writelines(json.dumps(r) + "\n" for r in done_rows)
+        print(f"resuming: {len(answered)} prompts already answered by every model")
+        prompts = [p for p in prompts if p["prompt"] not in answered]
+
     calls = len(prompts) * (len(models) + 1)
     cost = estimate(len(prompts), models, args.judge)
     print(f"{len(prompts)} prompts x {len(models)} models + 1 judge call each = {calls} calls")
@@ -207,24 +240,36 @@ def main(argv: Optional[list] = None) -> int:
             return 1
 
     os.makedirs(args.out, exist_ok=True)
-    rng = random.Random(args.seed)
-    rows: List[dict] = []
-    with open(os.path.join(args.out, "answers.jsonl"), "w") as log:
-        for i, item in enumerate(prompts, 1):
-            answers, costs = {}, {}
-            for m in models:
-                r = call_claude(args.claude_bin, MODELS[m][0], item["prompt"])
-                if r["error"]:
-                    print(f"  [{i}/{len(prompts)}] {m}: error: {r['error']}", file=sys.stderr)
-                    continue
-                answers[m], costs[m] = r["text"], r["cost"]
-            scores = judge(args.claude_bin, MODELS[args.judge][0], item["prompt"], answers, rng) if answers else {}
+    rows: List[dict] = list(done_rows)
+    lock = threading.Lock()
+    finished = [0]
+
+    def run_one(item: dict) -> None:
+        answers, costs = {}, {}
+        for m in models:
+            r = call_claude(args.claude_bin, MODELS[m][0], item["prompt"])
+            if r["error"]:
+                r = call_claude(args.claude_bin, MODELS[m][0], item["prompt"])  # once more, for a passing hiccup
+            if r["error"]:
+                print(f"  {item['subject']}/{item['tier']} {m}: error: {r['error']}", file=sys.stderr)
+                continue
+            answers[m], costs[m] = r["text"], r["cost"]
+        # Each prompt shuffles with its own seed, so the blind order doesn't depend on which thread ran first.
+        rng = random.Random(f"{args.seed}:{item['prompt']}")
+        scores = judge(args.claude_bin, MODELS[args.judge][0], item["prompt"], answers, rng) if answers else {}
+        with lock:
             for m in answers:
                 row = {**item, "model": m, "score": scores.get(m), "cost": costs[m], "answer": answers[m]}
                 rows.append(row)
                 log.write(json.dumps(row) + "\n")
+            log.flush()
+            finished[0] += 1
             got = ", ".join(f"{m} {scores[m]:g}" for m in models if m in scores) or "no scores"
-            print(f"  [{i}/{len(prompts)}] {item['subject']}/{item['tier']}: {got}")
+            print(f"  [{finished[0]}/{len(prompts)}] {item['subject']}/{item['tier']}: {got}", flush=True)
+
+    with open(log_path, "a" if args.resume else "w") as log:
+        with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+            list(pool.map(run_one, prompts))
 
     rec = recommend(rows, args.tolerance)
     with open(os.path.join(args.out, "summary.md"), "w") as f:

@@ -14,7 +14,9 @@ import run_eval  # noqa: E402
 FAKE_CLAUDE = r'''#!/usr/bin/env python3
 import json, re, sys
 argv = sys.argv[1:]
-assert "--bare" in argv and argv[argv.index("--tools") + 1] == "", argv
+# Nothing from the user's setup may steer the run: no settings, MCP servers, skills or tools.
+assert "--bare" not in argv and argv[argv.index("--setting-sources") + 1] == "", argv
+assert "--strict-mcp-config" in argv and "--disable-slash-commands" in argv and argv[argv.index("--tools") + 1] == "", argv
 model = argv[argv.index("--model") + 1]
 prompt = argv[-1]
 if prompt.startswith("You are grading"):
@@ -57,6 +59,26 @@ class EvalTest(unittest.TestCase):
         summary = open(os.path.join(out, "summary.md")).read()
         self.assertIn("| science | deep |", summary)
         self.assertEqual(len(open(os.path.join(out, "answers.jsonl")).read().splitlines()), 8)
+
+    def test_parallel_run_can_resume_and_redoes_a_prompt_missing_a_model(self):
+        out = os.path.join(self.dir.name, "results")
+        base = ["--prompts", self.prompts, "--claude-bin", self.claude, "--out", out, "--yes", "--jobs", "2"]
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(run_eval.main(base), 0)
+        log = os.path.join(out, "answers.jsonl")
+        rows = [json.loads(line) for line in open(log)]
+        self.assertEqual(len(rows), 8)
+        # One model's answer to one prompt is lost: only that prompt runs again.
+        kept = [r for r in rows if not (r["subject"] == "science" and r["model"] == "fable")]
+        with open(log, "w") as f:
+            f.writelines(json.dumps(r) + "\n" for r in kept)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            self.assertEqual(run_eval.main(base + ["--resume"]), 0)
+        self.assertIn("1 prompts already answered by every model", buf.getvalue())
+        again = [json.loads(line) for line in open(log)]
+        self.assertEqual(len(again), 8)
+        self.assertEqual(len({(r["prompt"], r["model"]) for r in again}), 8)
 
     def test_dry_run_makes_no_calls(self):
         buf = io.StringIO()
