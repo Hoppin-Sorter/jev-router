@@ -220,6 +220,10 @@ do {
     let pane = CGRect(x: 1100, y: 0, width: 14, height: 949)
     check(P.sessionArea(window: full, sidebarHandle: handle, paneHandle: pane) == CGRect(x: 272, y: 0, width: 828, height: 949), "left of an open side pane")
     check(P.sessionArea(window: full, sidebarHandle: nil, paneHandle: pane).minX == 0, "a pane with the sidebar collapsed")
+    // The app's own page, not one in its browser pane.
+    check(P.isClaudePage(url: "https://claude.ai/epitaxy/local_abc") && P.isClaudePage(url: "https://www.claude.ai/new"), "claude.ai pages are the app's")
+    check(!P.isClaudePage(url: "https://onedrive.live.com/:x:/g/personal/A") && !P.isClaudePage(url: "https://notclaude.ai/x") && !P.isClaudePage(url: nil), "other sites, and no address, are not")
+
     // Only over sessions Jev is running in.
     check(!P.shouldShow(confined: true, claudeFrontmost: true, ownAppFrontmost: false, hasWindow: true, jevRunning: false, wasShowing: true), "a Code session with no Jev process yet: hidden")
     check(P.hostSessionID(pageURL: "https://claude.ai/epitaxy/local_83300ae2-adf5-4e6f-9015-ef0aa780feba") == "local_83300ae2-adf5-4e6f-9015-ef0aa780feba", "the session id from the page address")

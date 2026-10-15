@@ -74,6 +74,13 @@ public enum LauncherPlacement {
         return last
     }
 
+    /// Whether a web page's address is the Claude app's own (claude.ai), as opposed to a site or
+    /// file open in its browser pane.
+    public static func isClaudePage(url: String?) -> Bool {
+        guard let host = url.flatMap({ URL(string: $0)?.host?.lowercased() }) else { return false }
+        return host == "claude.ai" || host.hasSuffix(".claude.ai")
+    }
+
     /// The Claude app names its page "<session> - Claude Code" in the Code tab; a chat's name ends
     /// in "- Claude" alone. Read through Accessibility, since the window's own title is just "Claude".
     public static func isCodeSession(pageTitle: String) -> Bool {

@@ -81,7 +81,7 @@ final class ClaudeLayout: @unchecked Sendable {
             }
         }
         guard let title, !title.isEmpty else { return nil }
-        let url = page.flatMap { Self.value($0, "AXURL") }.map { ($0 as? URL)?.absoluteString ?? "\($0)" }
+        let url = page.flatMap { Self.url($0) }
         guard let window = Self.frontWindowFrame(pid: pid) else { return Snapshot(pageTitle: title, pageURL: url) }
         // Full-height handles only: the app's header has short dividers too.
         let tall = frames.filter { $0.height >= window.height / 2 }
@@ -98,13 +98,20 @@ final class ClaudeLayout: @unchecked Sendable {
         let app = AXUIElementCreateApplication(pid)
         guard let window = Self.element(app, kAXFocusedWindowAttribute) ?? (Self.value(app, kAXWindowsAttribute) as? [AXUIElement])?.first else { return }
         var queue: [AXUIElement] = [window]
+        var fallback: AXUIElement?
         var visited = 0
         while !queue.isEmpty, visited < 5000 {
             let e = queue.removeFirst()
             visited += 1
             switch Self.string(e, kAXRoleAttribute) {
             case "AXWebArea":
-                if page == nil, let t = Self.string(e, kAXTitleAttribute), !t.isEmpty { page = e }
+                // The app's own page lives on claude.ai; the browser pane can hold others
+                // (a spreadsheet, a site), and a session's name must not come from those.
+                if let t = Self.string(e, kAXTitleAttribute), !t.isEmpty, LauncherPlacement.isClaudePage(url: Self.url(e)) {
+                    if page == nil { page = e }
+                } else if fallback == nil, let t = Self.string(e, kAXTitleAttribute), !t.isEmpty {
+                    fallback = e
+                }
             case "AXSplitter":
                 handles.append(e)
             default:
@@ -112,6 +119,12 @@ final class ClaudeLayout: @unchecked Sendable {
             }
             queue.append(contentsOf: (Self.value(e, kAXChildrenAttribute) as? [AXUIElement]) ?? [])
         }
+        // An older app whose pages carry no address: take the first titled one, as before.
+        if page == nil { page = fallback.flatMap { Self.url($0) == nil ? $0 : nil } }
+    }
+
+    private static func url(_ e: AXUIElement) -> String? {
+        value(e, "AXURL").map { ($0 as? URL)?.absoluteString ?? "\($0)" }
     }
 
     private static func frontWindowFrame(pid: pid_t) -> CGRect? {

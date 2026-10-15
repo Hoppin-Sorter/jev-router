@@ -319,6 +319,11 @@ async function status($: EngineInterface, text: string | undefined) {
   if (showStatus) await $.ui.status(text)
 }
 
+/** Takes down a line an earlier version left on screen (a reload keeps what was last set). */
+async function clearStatusIfOff($: EngineInterface) {
+  if (!showStatus) await $.ui.status(undefined)
+}
+
 /** The status line for the mode alone, before the first pick or after a mode change. */
 function modeStatus(): string | undefined {
   if (mode === 'off') return undefined
@@ -418,6 +423,7 @@ export const register: Register = (on, options) => {
     // Pinned from the start, so a session shows it's connected before the first prompt.
     const needsKey = mode === 'auto' || mode === 'shadow'
     const noKey = needsKey && !(await apiKey($))
+    await clearStatusIfOff($)
     await status($, noKey ? 'Jev: no API key (run /jev)' : modeStatus())
     // Without the status line, a missing key would otherwise go unnoticed.
     if (noKey && !showStatus) await $.ui.toast('Jev: no API key, so prompts are not routed. Run /jev to set one up.')

@@ -178,14 +178,16 @@ test('the status line is off by default', async ($, on) => {
   await submit($, 'add a dark mode toggle')
   await step($)
   expect(w.steps[0]?.model).toBe('claude-sonnet-5-5')
-  expect(w.statuses).toEqual([])
+  // Nothing is ever shown; the one write clears a line an earlier version may have left.
+  expect(w.statuses.filter(s => s !== undefined)).toEqual([])
+  expect(w.statuses.at(-1)).toBeUndefined()
   expect(w.toasts).toEqual([])
 })
 
 test('with the status line off, a missing key is still pointed out once', async ($, on) => {
   const w = world(on, { current: { tier: { routine: 1 }, risky: 0, skill: { none: 1 } } }, {})
   await startSession($, on)
-  expect(w.statuses).toEqual([])
+  expect(w.statuses.filter(s => s !== undefined)).toEqual([])
   expect(w.toasts.length).toBe(1)
   expect(w.toasts[0]).toContain('no API key')
 })
