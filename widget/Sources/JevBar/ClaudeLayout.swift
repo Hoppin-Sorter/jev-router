@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import JevCore
 
 /// What the Claude window is showing, read through Accessibility: the page's name (which says
 /// whether it's a Claude Code session or a chat), its address (which holds the app's id for the
