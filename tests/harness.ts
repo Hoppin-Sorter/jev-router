@@ -36,6 +36,7 @@ export function world(on: On, reply: { current: Reply | 'error' }, env: Record<s
   const requests: { questions: Record<string, unknown> }[] = []
   const steps: TurnStepInput[] = []
   const statuses: (string | undefined)[] = []
+  const toasts: string[] = []
   // ~/.config/jev/ in memory; no api_key file, so the key comes from env.
   const files = new Map<string, string>()
 
@@ -49,6 +50,10 @@ export function world(on: On, reply: { current: Reply | 'error' }, env: Record<s
   })
   on('ui.status', async ($, e) => {
     statuses.push(e.text)
+    return { value: undefined }
+  })
+  on('ui.toast', async ($, e) => {
+    toasts.push(e.text)
     return { value: undefined }
   })
   on('session.id', async () => ({ value: 'sess-a' }))
@@ -89,7 +94,7 @@ export function world(on: On, reply: { current: Reply | 'error' }, env: Record<s
       JSON.stringify({ version: 1, mode: 'auto', focus: 2, effort: false, skills: true, specialists: true, nudge: null, ...patch, updatedAt: ++widgetAt, updatedBy: 'widget' }),
     )
 
-  return { clock, requests, steps, statuses, files, widget }
+  return { clock, requests, steps, statuses, toasts, files, widget }
 }
 
 export const submit = ($: Engine, text: string, kind: 'composer' | 'scheduled-trigger' | 'task-notification' = 'composer') =>

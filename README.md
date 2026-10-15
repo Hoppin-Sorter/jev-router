@@ -94,7 +94,9 @@ And at every focus level:
 
 ## Is this session using Jev?
 
-Look under the prompt. The plugin pins one status line there as soon as a session starts:
+Run `/jev`: it gives the full picture, with mode, focus, where the key was found and the last 10 decisions. On a Mac, the [menu bar widget](#menu-bar-widget-macos) shows the latest pick all the time. A missing API key is pointed out once, when a session starts.
+
+For a line under the prompt as well, turn on the `statusLine` option (below). It's off by default because the desktop app draws that line beside the reply box. With it on, the plugin pins one line there as soon as a session starts:
 
 | Status line | Means |
 |---|---|
@@ -105,8 +107,6 @@ Look under the prompt. The plugin pins one status line there as soon as a sessio
 | `Jev: no API key (run /jev)` | Installed, but it can't ask Jev, so your model is left alone |
 | `Jev: timed out; kept Opus 5.5` | Jev didn't answer in time this prompt; the model stayed as it was |
 | nothing | The router is off. If `/jev` isn't a command either, the plugin isn't installed in this session |
-
-`/jev` gives the full picture: mode, focus, where the key was found and the last 10 decisions.
 
 Change focus, mode and the switches with [`/jev`](#commands) or the [menu bar widget](#menu-bar-widget-macos). Your choices are remembered across sessions and shared through `~/.config/jev/settings.json`. The widget's **− / +** moves a session's model down or up one tier right away, mid-turn included; routing picks up again with the next task.
 
@@ -122,7 +122,7 @@ Change focus, mode and the switches with [`/jev`](#commands) or the [menu bar wi
 - **Focus:** a 5-step slider from Token efficient to Task focused, like `/jev focus`, plus the Effort, Skills and Specialists switches.
 - **Saved:** for Today, 7 days or 30 days, what your Claude Code requests were worth at API list prices, against the same tokens all on Opus 5.5, minus what Jev cost, with a bar showing the model mix. These are list-price values; a Pro or Max plan bills differently.
 - **Recent:** the last five decisions. Never your prompt text.
-- **⋯ menu:** **Customize** shows or hides each card, and turns on the optional **Water & CO₂** line (below). **Pop out** opens a small floating pill (model, focus, today's savings) that stays on top on every Space; drag it anywhere. **Floating icon** puts a small Jev icon on screen; park it just above Claude's reply box, say. It belongs to the Claude Code session on screen: it shows only while Claude is in front with a Code session open, keeps to the conversation area right of the sidebar (and left of a terminal or preview pane), follows it when you move the window or collapse the sidebar, and disappears in a chat or any other app. Telling a session from a chat and finding the sidebar reads Claude's window through Accessibility, so Jev Bar asks for that access (⋯ → **Allow Accessibility access…**); without it the icon keeps to the whole Claude window in every tab. **Only show over Claude** turns all this off, and the icon then stays on top on every Space. Click it and it turns into an X with a dial above it: drag the focus slider (Task focused at the top, Token efficient at the bottom) and click the circles to switch the router (on → shadow → off), effort, skills and specialists. Click the X to close it, drag the icon to move it. It's off until you turn it on.
+- **⋯ menu:** **Customize** shows or hides each card, and turns on the optional **Water & CO₂** line (below). **Pop out** opens a small floating pill (model, focus, today's savings) that stays on top on every Space; drag it anywhere. **Floating icon** puts a small Jev icon on screen; park it just above Claude's reply box, say. It belongs to the Claude Code session on screen: it shows only while Claude is in front with a Code session open that Jev is running in, keeps to the conversation area right of the sidebar (and left of a terminal or preview pane), follows it when you move the window or collapse the sidebar, and disappears in a chat or any other app. A session you've only clicked into has no Claude Code process, and so no Jev, until you send it a message; the icon appears with that first message. (The plugin keeps a small heartbeat file per desktop session in `~/.config/jev/sessions/` so the widget can tell.) Telling a session from a chat and finding the sidebar reads Claude's window through Accessibility, so Jev Bar asks for that access (⋯ → **Allow Accessibility access…**); without it the icon keeps to the whole Claude window in every tab. **Only show over Claude** turns all this off, and the icon then stays on top on every Space. Click it and it turns into an X with a dial above it: drag the focus slider (Task focused at the top, Token efficient at the bottom) and click the circles to switch the router (on → shadow → off), effort, skills and specialists. Click the X to close it, drag the icon to move it. It's off until you turn it on.
 
 The widget is never built for you. Installing the plugin doesn't build it, and nothing in jev-router runs the build script on its own. When you want it, build it yourself (needs Xcode or the Command Line Tools, Swift 5.9+):
 
@@ -160,13 +160,14 @@ Hover over the note for the assumptions. When routing cost more than Opus 5.5 wo
 
 ### How the widget and the plugin talk
 
-Through three small files in `~/.config/jev/`. There's no server and nothing leaves your Mac.
+Through a few small files in `~/.config/jev/`. There's no server and nothing leaves your Mac.
 
 | File | Written by | Holds |
 |---|---|---|
 | `settings.json` | both | mode (`auto`, `shadow` or `off`), focus 0–4, the effort/skills/specialists switches, a one-shot `nudge` for one session, and `updatedAt`. The newer write wins, so `/jev`, the widget and other sessions stay in sync. |
 | `last.json` | plugin | the latest decision, the session it came from, and whether that session is working |
 | `decisions.jsonl` | plugin | one decision per line, newest last, trimmed to about 500 lines. Model, tier, subject, skill, confidence, latency and Jev cost. **No prompt text.** |
+| `sessions/<id>.json` | plugin | in the desktop app, one heartbeat per session Jev is running in, named by the app's id for the session and rewritten every 30 seconds; marked ended when the session stops. The widget shows its icon only over sessions with a fresh one, and deletes files a week old. |
 
 The **Saved** card reads token usage from Claude Code's own transcripts in `~/.claude/projects/` (each request counted once) and caches what it has read, so only changed files are read again. Prices per million tokens (input / output / cache read), from Anthropic's pricing page in October 2026: Haiku 4.5 $1 / $5 / $0.10, Sonnet 5.5 $2 / $10 / $0.20, Opus 5.5 $4 / $20 / $0.20, Fable 5.1 $10 / $50 / $0.25, Opus 5 $5 / $25 / $0.50, Fable 5 $10 / $50 / $1.00. Cache writes cost 1.25× input (5-minute) or 2× (1-hour). Jev is $0.042 per million input tokens. Requests on other models are left out and counted separately.
 
@@ -192,6 +193,7 @@ Set in `/plugin configure jev-router@jev-router`. Choices made with `/jev` or th
 | `deepModel` | `claude-opus-5-5` | Model for the deepest tier on every subject. Set `claude-fable-5-1` for a stronger (and pricier) top tier everywhere. |
 | `skillHints` | `true` | Tell Claude which installed skill Jev picked. |
 | `effortRouting` | `false` | Also set reasoning effort (see above). Haiku takes none. Off keeps your session's effort. |
+| `statusLine` | `false` | Show Jev's pick in the line under the prompt (see [Is this session using Jev?](#is-this-session-using-jev)). |
 
 ## Tune it with your own eval
 

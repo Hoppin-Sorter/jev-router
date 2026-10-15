@@ -4,13 +4,13 @@ import { CASES, FABLE, hardChemistry, none, OPUS, SONNET } from './scenarios'
 
 // Simulations: the scenarios in scenarios.ts through the plugin's real code, checking the
 // model and effort each request is sent with, the skill hint, and the status line under the
-// prompt; then a few that play out over several prompts.
+// prompt (with the statusLine option on); then a few that play out over several prompts.
 //
 // Jev's answers are scripted, so these check what the router does with them. Whether Jev
 // reads real prompts this way is a separate check against the live API.
 
 for (const c of CASES) {
-  test(c.name, async ($, on) => {
+  test(c.name, { options: { statusLine: true } }, async ($, on) => {
     const w = world(on, { current: c.reply }, c.noKey ? {} : undefined)
     if (c.settings) w.widget(c.settings)
     const entered = await submit($, c.prompt)
@@ -47,7 +47,7 @@ test('lowering focus in the widget mid-task drops Fable on the next prompt', asy
   expect(w.steps[1]?.model).toBe(OPUS)
 })
 
-test("the widget's nudge moves a Fable task down to Opus on its next request", async ($, on) => {
+test("the widget's nudge moves a Fable task down to Opus on its next request", { options: { statusLine: true } }, async ($, on) => {
   const w = world(on, { current: hardChemistry })
   w.widget({ effort: true })
   await submit($, 'derive the transition state energy for this SN2 reaction')
@@ -65,7 +65,7 @@ test("the widget's nudge moves a Fable task down to Opus on its next request", a
   expect(log.at(-1)).toMatchObject({ model: OPUS, tier: 'complex', manual: true })
 })
 
-test('turning the router off in the widget hands the next prompt back to the session model', async ($, on) => {
+test('turning the router off in the widget hands the next prompt back to the session model', { options: { statusLine: true } }, async ($, on) => {
   const w = world(on, { current: { tier: { routine: 0.9, complex: 0.1 }, risky: 0, skill: none } })
   await submit($, 'add a dark mode toggle to settings')
   await step($)

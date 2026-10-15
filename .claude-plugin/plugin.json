@@ -1,6 +1,6 @@
 {
   "name": "jev-router",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Asks Jev before each prompt what the task is and how hard it is, then picks the Claude model (and optionally effort) and the skill that fit. /jev and the Jev Bar menu bar widget set the quality/cost focus.",
   "author": {
     "name": "Ethan Hoppin",
@@ -51,6 +51,12 @@
         "task-focused"
       ],
       "default": "balanced"
+    },
+    "statusLine": {
+      "type": "boolean",
+      "title": "Status line",
+      "description": "Show what Jev picked in the line under the prompt. Off by default: the Jev Bar widget shows the same, and the desktop app draws this line beside the reply box.",
+      "default": false
     }
   }
 }
