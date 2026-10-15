@@ -215,6 +215,8 @@ do {
     check(P.sessionArea(window: full, sidebarHandle: nil) == full, "sidebar collapsed: the whole window")
     check(P.sessionArea(window: full, sidebarHandle: CGRect(x: 0, y: 0, width: 14, height: 949)) == full, "a handle at the very left counts as collapsed")
     check(P.sessionArea(window: full, sidebarHandle: CGRect(x: 1400, y: 0, width: 14, height: 949)) == full, "a handle on the right isn't the sidebar's")
+    // After the October 2026 app update the header has a 1×18 divider at the right.
+    check(P.sessionArea(window: full, sidebarHandle: handle, paneHandle: CGRect(x: 1333, y: 912, width: 1, height: 18)) == CGRect(x: 272, y: 0, width: 1240, height: 949), "a short header divider isn't a pane")
     let pane = CGRect(x: 1100, y: 0, width: 14, height: 949)
     check(P.sessionArea(window: full, sidebarHandle: handle, paneHandle: pane) == CGRect(x: 272, y: 0, width: 828, height: 949), "left of an open side pane")
     check(P.sessionArea(window: full, sidebarHandle: nil, paneHandle: pane).minX == 0, "a pane with the sidebar collapsed")

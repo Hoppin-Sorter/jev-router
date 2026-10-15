@@ -83,8 +83,10 @@ final class ClaudeLayout: @unchecked Sendable {
         guard let title, !title.isEmpty else { return nil }
         let url = page.flatMap { Self.value($0, "AXURL") }.map { ($0 as? URL)?.absoluteString ?? "\($0)" }
         guard let window = Self.frontWindowFrame(pid: pid) else { return Snapshot(pageTitle: title, pageURL: url) }
-        let left = frames.filter { $0.midX < window.midX }.max { $0.minX < $1.minX }
-        let right = frames.filter { $0.midX > window.midX }.min { $0.minX < $1.minX }
+        // Full-height handles only: the app's header has short dividers too.
+        let tall = frames.filter { $0.height >= window.height / 2 }
+        let left = tall.filter { $0.midX < window.midX }.max { $0.minX < $1.minX }
+        let right = tall.filter { $0.midX > window.midX }.min { $0.minX < $1.minX }
         return Snapshot(pageTitle: title, pageURL: url, sidebarHandle: left, paneHandle: right)
     }
 

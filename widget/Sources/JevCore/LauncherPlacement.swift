@@ -83,10 +83,13 @@ public enum LauncherPlacement {
     /// The session's own area in the window: right of the sidebar's resize handle when the sidebar
     /// is open, and left of a side pane's handle (terminal, preview) when one is open. A missing
     /// handle, or one that doesn't sit where a sidebar or pane would, leaves that edge at the window's.
+    /// A handle shorter than half the window is a divider inside a bar (the app's header has one),
+    /// not a sidebar's or pane's.
     public static func sessionArea(window: CGRect, sidebarHandle: CGRect?, paneHandle: CGRect? = nil) -> CGRect {
         var minX = window.minX, maxX = window.maxX
-        if let h = sidebarHandle, h.maxX > window.minX + 40, h.maxX < window.midX { minX = h.maxX }
-        if let h = paneHandle, h.minX > window.midX, h.minX < window.maxX - 40 { maxX = h.minX }
+        let tall = { (h: CGRect) in h.height >= window.height / 2 }
+        if let h = sidebarHandle, tall(h), h.maxX > window.minX + 40, h.maxX < window.midX { minX = h.maxX }
+        if let h = paneHandle, tall(h), h.minX > window.midX, h.minX < window.maxX - 40 { maxX = h.minX }
         guard maxX - minX >= minimumWindow.width / 2 else { return window }
         return CGRect(x: minX, y: window.minY, width: maxX - minX, height: window.height)
     }
