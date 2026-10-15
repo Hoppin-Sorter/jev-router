@@ -1,4 +1,4 @@
-import type { CommandInfo, EngineInterface, Register } from 'claude-code'
+import type { CommandInfo, EngineInterface, Register, Timer } from 'claude-code'
 import {
   buildRequest,
   choose,
@@ -20,13 +20,17 @@ import {
 } from '../lib/jev-router'
 import {
   appendDecision,
+  BEAT_MS,
+  beatFileName,
   CONFIG_DIR,
   DECISIONS_FILE,
   estimateTokens,
+  formatBeat,
   formatSettings,
   jevCost,
   LAST_FILE,
   parseSettings,
+  SESSIONS_DIR,
   SETTINGS_FILE,
   type DecisionRecord,
   type LastState,
@@ -40,14 +44,17 @@ import type { Settings } from '../types'
 // picks the model (a subject specialist such as Fable for hard science, otherwise the
 // tier's model) and, with effort routing on, the reasoning effort, and applies them to
 // every main-loop request of the turn. /jev and the menu bar widget set the quality/cost
-// focus and turn features on and off. The status line under the prompt shows the
-// session is connected from the start, then what Jev picked, or why it didn't.
+// focus and turn features on and off. With the statusLine option on, the line under the
+// prompt shows the session is connected from the start, then what Jev picked, or why it
+// didn't; it's off by default, since the widget shows the same and the desktop app draws
+// that line beside the reply box.
 // The rubric, thresholds and decisions live in lib/jev-router.ts, shared with agents
 // that use the router outside Claude Code.
 //
 // Shadow mode asks Jev and logs what it would pick without switching the model or
 // hinting a skill. The menu bar widget and this plugin share ~/.config/jev/ (see
-// lib/contract.ts): settings.json both ways, last.json and decisions.jsonl from here.
+// lib/contract.ts): settings.json both ways, last.json, decisions.jsonl and, in the
+// desktop app, a heartbeat per session from here.
 // No prompt text is kept anywhere.
 
 type Mode = RouterMode | Tier
@@ -104,6 +111,10 @@ let seenNudge: string | undefined
 let sessionId = ''
 let lastDecision: DecisionRecord | null = null
 let working = { on: false, since: 0 }
+// In the desktop app, the app's id for this session and the timer that keeps its heartbeat
+// fresh, so the widget shows only over sessions Jev is running in.
+let beat: { host: string; startedAt: number; timer?: Timer } | undefined
+let showStatus = false
 
 const plan = (): ModelPlan => ({
   models,
@@ -247,6 +258,17 @@ async function writeLast($: EngineInterface) {
   await writeFile($, LAST_FILE, JSON.stringify(last, null, 2) + '\n')
 }
 
+/** Rewrites this session's heartbeat file (desktop app only); `ended` when the session stops. */
+async function writeBeat($: EngineInterface, ended = false) {
+  const name = beat && beatFileName(beat.host)
+  if (!beat || !name) return
+  await writeFile(
+    $,
+    `${SESSIONS_DIR}/${name}`,
+    formatBeat({ version: 1, host: beat.host, session: await ensureSessionId($), startedAt: beat.startedAt, updatedAt: await $.clock.now(), ...(ended ? { ended } : {}) }),
+  )
+}
+
 async function record($: EngineInterface, decision: DecisionRecord) {
   const history = await readHistory($)
   await $.store.set('history', [decision, ...history].slice(0, HISTORY))
@@ -269,7 +291,7 @@ async function applyShared($: EngineInterface, nudgeOnly = false) {
       mode = shared.mode
       active = undefined
       await $.store.set('mode', mode)
-      await $.ui.status(modeStatus())
+      await status($, modeStatus())
     }
     if (shared.focus !== focus) {
       focus = shared.focus
@@ -292,6 +314,11 @@ async function applyShared($: EngineInterface, nudgeOnly = false) {
   }
 }
 
+/** The line under the prompt, written only with the statusLine option on. */
+async function status($: EngineInterface, text: string | undefined) {
+  if (showStatus) await $.ui.status(text)
+}
+
 /** The status line for the mode alone, before the first pick or after a mode change. */
 function modeStatus(): string | undefined {
   if (mode === 'off') return undefined
@@ -311,7 +338,7 @@ async function setMode($: EngineInterface, next: Mode) {
   mode = next
   active = next === 'auto' || next === 'shadow' || next === 'off' ? undefined : { tier: next, model: models[next], effort: TIER_EFFORT[next], at: await $.clock.now(), specialist: false }
   await $.store.set('mode', next)
-  await $.ui.status(modeStatus())
+  await status($, modeStatus())
   await writeShared($)
   await writeLast($)
 }
@@ -329,7 +356,7 @@ async function nudge($: EngineInterface, by: -1 | 1) {
   const c = choose(plan(), tier, { subject: active?.subject, focus })
   const now = await $.clock.now()
   active = { tier, model: c.model, effort: c.effort, at: now, specialist: c.specialist, subject: active?.subject }
-  await $.ui.status(`Jev → ${label(active.model)} (you)`)
+  await status($, `Jev → ${label(active.model)} (you)`)
   await record($, {
     at: now,
     session: await ensureSessionId($),
@@ -351,6 +378,7 @@ export const register: Register = (on, options) => {
     complex: 'claude-opus-5-5',
     deep: typeof options.deepModel === 'string' ? options.deepModel : 'claude-opus-5-5',
   }
+  showStatus = options.statusLine === true
   const defaults: Settings = {
     effort: options.effortRouting === true,
     skills: options.skillHints !== false,
@@ -367,6 +395,7 @@ export const register: Register = (on, options) => {
   sessionId = ''
   lastDecision = null
   working = { on: false, since: 0 }
+  beat = undefined
 
   on('session.start', async ($, e, next) => {
     const savedMode = await $.store.get('mode')
@@ -378,9 +407,20 @@ export const register: Register = (on, options) => {
     const savedNudge = await $.store.get('seenNudge')
     seenNudge = typeof savedNudge === 'string' ? savedNudge : undefined
     await applyShared($)
+    // The desktop app names each session; the widget matches that name to the page on screen.
+    const host = (await $.env.get('CLAUDE_CODE_HOST_SESSION_ID'))?.trim()
+    beat?.timer?.cancel()
+    beat = host && beatFileName(host) ? { host, startedAt: await $.clock.now() } : undefined
+    if (beat) {
+      await writeBeat($)
+      beat.timer = $.clock.every(BEAT_MS, () => void writeBeat($))
+    }
     // Pinned from the start, so a session shows it's connected before the first prompt.
     const needsKey = mode === 'auto' || mode === 'shadow'
-    await $.ui.status(needsKey && !(await apiKey($)) ? 'Jev: no API key (run /jev)' : modeStatus())
+    const noKey = needsKey && !(await apiKey($))
+    await status($, noKey ? 'Jev: no API key (run /jev)' : modeStatus())
+    // Without the status line, a missing key would otherwise go unnoticed.
+    if (noKey && !showStatus) await $.ui.toast('Jev: no API key, so prompts are not routed. Run /jev to set one up.')
     await $.command.register({
       name: 'jev',
       description: 'Jev router: status, auto, shadow, off, pin <tier>, reset, focus <0-4>',
@@ -419,13 +459,13 @@ export const register: Register = (on, options) => {
     if (wantTier || skillList.length) {
       const key = await apiKey($)
       if (!key) {
-        await $.ui.status('Jev: no API key (run /jev)')
+        await status($, 'Jev: no API key (run /jev)')
         await writeLast($)
         return next(e)
       }
       const reply = await askJev($, key.key, e.text, wantTier, skillList)
       if ('error' in reply) {
-        await $.ui.status(`Jev: ${reply.error}; kept ${label(active?.model)}`)
+        await status($, `Jev: ${reply.error}; kept ${label(active?.model)}`)
         await writeLast($)
         return next(e)
       }
@@ -472,7 +512,7 @@ export const register: Register = (on, options) => {
       focus,
     })
     const summary = `${label(model)}${effort ? ` · ${effort}` : ''}${subject ? ` · ${subject}` : ''}${skill ? ` · /${skill.name}` : ''}`
-    await $.ui.status(shadow ? `Jev (shadow) would pick ${summary}` : `Jev → ${summary}`)
+    await status($, shadow ? `Jev (shadow) would pick ${summary}` : `Jev → ${summary}`)
 
     if (!skill || shadow) return next(e)
     const hint =
@@ -494,6 +534,18 @@ export const register: Register = (on, options) => {
     const wanted = active.tier === 'mechanical' ? undefined : settings.effort && active.effort ? (active.effort as Effort) : effort
     if (e.model === active.model && wanted === effort) return yield* next(e)
     return yield* next(wanted ? { ...rest, model: active.model, effort: wanted } : { ...rest, model: active.model })
+  })
+
+  // After a /clear or a resume the same process goes on under another transcript id, so
+  // the heartbeat keeps going; anything else ends the process.
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear' || e.reason === 'resume') sessionId = ''
+    else if (beat) {
+      beat.timer?.cancel()
+      await writeBeat($, true)
+      beat = undefined
+    }
+    return next(e)
   })
 
   // A long turn counts as activity, so the idle reset runs from when work stopped.

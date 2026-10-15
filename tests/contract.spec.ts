@@ -1,7 +1,7 @@
 // Tests for the shared ~/.config/jev/ contract (lib/contract.ts): `node --test tests/`
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { appendDecision, DEFAULT_SHARED, estimateTokens, jevCost, parseSettings, type DecisionRecord } from '../lib/contract.ts'
+import { appendDecision, BEAT_STALE_MS, beatFileName, DEFAULT_SHARED, estimateTokens, formatBeat, isBeatLive, jevCost, parseBeat, parseSettings, type DecisionRecord } from '../lib/contract.ts'
 
 test('settings.json: bad fields take defaults, junk is rejected', () => {
   assert.equal(parseSettings('not json'), undefined)
@@ -29,4 +29,19 @@ test('decisions.jsonl keeps the newest lines', () => {
 test('Jev cost is $0.042 per million input tokens', () => {
   assert.equal(estimateTokens('x'.repeat(4000)), 1000)
   assert.ok(Math.abs(jevCost(1_000_000) - 0.042) < 1e-12)
+})
+
+test('session heartbeats: named by the host id, live until stale or ended', () => {
+  assert.equal(beatFileName('local_83300ae2-adf5-4e6f-9015-ef0aa780feba'), 'local_83300ae2-adf5-4e6f-9015-ef0aa780feba.json')
+  assert.equal(beatFileName(undefined), undefined)
+  assert.equal(beatFileName(''), undefined)
+  assert.equal(beatFileName('../settings'), undefined)
+  const b = { version: 1 as const, host: 'local_a', session: 's', startedAt: 10, updatedAt: 1_000 }
+  assert.deepEqual(parseBeat(formatBeat(b)), b)
+  assert.equal(parseBeat('{"host":"local_a"}'), undefined)
+  assert.equal(parseBeat('nope'), undefined)
+  assert.ok(isBeatLive(b, 1_000 + BEAT_STALE_MS))
+  assert.ok(!isBeatLive(b, 1_001 + BEAT_STALE_MS))
+  assert.ok(!isBeatLive({ ...b, ended: true }, 1_000))
+  assert.ok(!isBeatLive(undefined, 0))
 })

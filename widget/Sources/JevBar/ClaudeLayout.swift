@@ -2,8 +2,8 @@ import AppKit
 import ApplicationServices
 
 /// What the Claude window is showing, read through Accessibility: the page's name (which says
-/// whether it's a Claude Code session or a chat) and where the sidebar's and any side pane's
-/// resize handles are. Needs Accessibility access for Jev Bar; without it nothing is read and the
+/// whether it's a Claude Code session or a chat), its address (which holds the app's id for the
+/// session) and where the sidebar's and any side pane's resize handles are. Needs Accessibility access for Jev Bar; without it nothing is read and the
 /// icon keeps to the whole window, in every tab.
 ///
 /// A full search of Claude's window takes tens of milliseconds, so it runs off the main thread at
@@ -12,6 +12,7 @@ import ApplicationServices
 final class ClaudeLayout: @unchecked Sendable {
     struct Snapshot: Equatable {
         var pageTitle: String
+        var pageURL: String?
         var sidebarHandle: CGRect?
         var paneHandle: CGRect?
     }
@@ -80,10 +81,11 @@ final class ClaudeLayout: @unchecked Sendable {
             }
         }
         guard let title, !title.isEmpty else { return nil }
-        guard let window = Self.frontWindowFrame(pid: pid) else { return Snapshot(pageTitle: title) }
+        let url = page.flatMap { Self.value($0, "AXURL") }.map { ($0 as? URL)?.absoluteString ?? "\($0)" }
+        guard let window = Self.frontWindowFrame(pid: pid) else { return Snapshot(pageTitle: title, pageURL: url) }
         let left = frames.filter { $0.midX < window.midX }.max { $0.minX < $1.minX }
         let right = frames.filter { $0.midX > window.midX }.min { $0.minX < $1.minX }
-        return Snapshot(pageTitle: title, sidebarHandle: left, paneHandle: right)
+        return Snapshot(pageTitle: title, pageURL: url, sidebarHandle: left, paneHandle: right)
     }
 
     /// Breadth first through the front window: the named web page, and every resize handle.

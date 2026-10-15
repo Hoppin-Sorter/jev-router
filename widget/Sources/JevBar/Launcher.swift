@@ -9,11 +9,13 @@ import SwiftUI
 /// Off until it's turned on under ⋯ → Floating icon, and remembered after that.
 ///
 /// By default it belongs to the Claude Code session on screen: it shows only while the Claude app
-/// is in front with a Code session open (not a chat), keeps to that session's area right of the
+/// is in front with a Code session open (not a chat) that Jev is running in, keeps to that session's area right of the
 /// sidebar (and left of a side pane), follows it when the window moves or the sidebar collapses,
-/// and is gone in any other app. Telling a session from a chat, and finding the sidebar, takes
-/// Accessibility access (ClaudeLayout); without it the icon keeps to the whole Claude window in
-/// every tab. ⋯ → Only show over Claude turns the confinement off.
+/// and is gone in any other app. A session you've only clicked into has no Claude Code process,
+/// and so no Jev, until you send it a message; the plugin's heartbeat for the session (named by
+/// the id in the page's address) says when it is running. Telling a session from a chat, reading
+/// that id and finding the sidebar take Accessibility access (ClaudeLayout); without it the icon
+/// keeps to the whole Claude window in every tab. ⋯ → Only show over Claude turns the confinement off.
 @MainActor
 @Observable
 final class LauncherController {
@@ -27,6 +29,9 @@ final class LauncherController {
     /// session's part of Claude's window, or the whole window without Accessibility access.
     @ObservationIgnored private var claudeWindow: CGRect?
     @ObservationIgnored private let layout = ClaudeLayout()
+    @ObservationIgnored private var store: ConfigStore?
+    /// The last heartbeat looked up, so a file is read at most once a second, not every tick.
+    @ObservationIgnored private var beatCache: (host: String, at: Date, beat: SessionBeat?)?
     @ObservationIgnored private var anchor = LauncherController.savedAnchor()
     private(set) var isShown = false
     private(set) var isOpen = false
@@ -69,6 +74,8 @@ final class LauncherController {
         }
         panel.setFrameAutosaveName("JevLauncher")
         self.panel = panel
+        store = model.store
+        model.store.pruneBeats()
         isShown = true
         startTracking()
         refresh()
@@ -134,6 +141,7 @@ final class LauncherController {
         guard let panel else { return }
         let front = NSWorkspace.shared.frontmostApplication
         var inCodeSession = true
+        var jevRunning = true
         claudeWindow = nil
         if onlyInClaude, let (pid, window) = Self.claudeWindowNow() {
             layout.refresh(pid: pid)
@@ -142,6 +150,10 @@ final class LauncherController {
             if let page = layout.latest, let mainDisplay = NSScreen.screens.first {
                 let flip = { (r: CGRect) in LauncherPlacement.appKitRect(fromCG: r, mainDisplayHeight: mainDisplay.frame.height) }
                 inCodeSession = LauncherPlacement.isCodeSession(pageTitle: page.pageTitle)
+                // No id in the address (an older app, a page it doesn't name) can't be checked, so it shows.
+                if inCodeSession, let host = page.pageURL.flatMap(LauncherPlacement.hostSessionID(pageURL:)) {
+                    jevRunning = beat(host: host)?.isLive(now: Date().timeIntervalSince1970 * 1000) ?? false
+                }
                 claudeWindow = LauncherPlacement.sessionArea(window: window, sidebarHandle: page.sidebarHandle.map(flip), paneHandle: page.paneHandle.map(flip))
             }
         }
@@ -151,6 +163,7 @@ final class LauncherController {
             ownAppFrontmost: front?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
             hasWindow: claudeWindow != nil,
             inCodeSession: inCodeSession,
+            jevRunning: jevRunning,
             wasShowing: panel.isVisible
         )
         if showing {
@@ -169,6 +182,13 @@ final class LauncherController {
             dial?.orderOut(nil)
             panel.orderOut(nil)
         }
+    }
+
+    private func beat(host: String) -> SessionBeat? {
+        if let c = beatCache, c.host == host, Date().timeIntervalSince(c.at) < 1 { return c.beat }
+        let b = store?.readBeat(host: host)
+        beatCache = (host, Date(), b)
+        return b
     }
 
     /// The icon was dragged: remember its place in the Claude window and bring the dial along.

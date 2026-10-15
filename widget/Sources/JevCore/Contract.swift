@@ -6,6 +6,9 @@ import Foundation
 //   settings.json    both write it; the newer updatedAt wins.
 //   last.json        the plugin writes it: the latest decision and whether a turn is running.
 //   decisions.jsonl  the plugin appends one decision per line (never prompt text).
+//   sessions/<host>.json
+//                    the plugin's heartbeat for each Claude desktop session it runs in, named
+//                    by the app's id for the session (the one in the page's address).
 
 public enum RouterMode: String, Codable, CaseIterable, Sendable {
     case off, shadow, auto
@@ -118,6 +121,44 @@ public struct LastState: Codable, Equatable, Sendable {
     }
 }
 
+/// One desktop session's heartbeat: Jev is running in it while the beat is fresh and not ended.
+public struct SessionBeat: Codable, Equatable, Sendable {
+    public static let interval: Double = 30_000
+    /// Three missed beats: the process quit without saying so.
+    public static let staleAfter: Double = 90_000
+
+    public var host: String
+    public var session: String
+    public var startedAt: Double
+    public var updatedAt: Double
+    public var ended: Bool?
+
+    public init(host: String, session: String, startedAt: Double, updatedAt: Double, ended: Bool? = nil) {
+        self.host = host
+        self.session = session
+        self.startedAt = startedAt
+        self.updatedAt = updatedAt
+        self.ended = ended
+    }
+
+    public static func parse(_ data: Data) -> SessionBeat? {
+        try? JSONDecoder().decode(SessionBeat.self, from: data)
+    }
+
+    /// The file name for a host session id, or nil for anything that isn't one.
+    public static func fileName(host: String) -> String? {
+        let ok = !host.isEmpty && host.count <= 128 && host.unicodeScalars.allSatisfy {
+            CharacterSet.alphanumerics.contains($0) && $0.isASCII || $0 == "_" || $0 == "-"
+        }
+        return ok ? host + ".json" : nil
+    }
+
+    /// Whether the session's process was running Jev as of `now` (ms since the epoch).
+    public func isLive(now: Double) -> Bool {
+        ended != true && now - updatedAt <= Self.staleAfter
+    }
+}
+
 /// Reads and writes ~/.config/jev/. Every read tolerates a missing or half-written file.
 public struct ConfigStore: Sendable {
     public let dir: URL
@@ -129,6 +170,7 @@ public struct ConfigStore: Sendable {
     public var settingsURL: URL { dir.appendingPathComponent("settings.json") }
     public var lastURL: URL { dir.appendingPathComponent("last.json") }
     public var decisionsURL: URL { dir.appendingPathComponent("decisions.jsonl") }
+    public var sessionsURL: URL { dir.appendingPathComponent("sessions") }
 
     public func readSettings() -> SharedSettings? {
         (try? Data(contentsOf: settingsURL)).flatMap(SharedSettings.parse)
@@ -140,6 +182,24 @@ public struct ConfigStore: Sendable {
 
     public func readDecisions() -> [Decision] {
         (try? Data(contentsOf: decisionsURL)).map(Decision.parseLines) ?? []
+    }
+
+    /// The heartbeat of the desktop session with this id, if the plugin has run in it.
+    public func readBeat(host: String) -> SessionBeat? {
+        guard let name = SessionBeat.fileName(host: host) else { return nil }
+        return (try? Data(contentsOf: sessionsURL.appendingPathComponent(name))).flatMap(SessionBeat.parse)
+    }
+
+    /// Deletes heartbeats of sessions that stopped more than `age` seconds ago; the plugin
+    /// can't delete files, so the folder would otherwise keep one per session ever opened.
+    public func pruneBeats(olderThan age: TimeInterval = 7 * 86_400, now: Date = Date()) {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: sessionsURL.path) else { return }
+        for name in names where name.hasSuffix(".json") {
+            let url = sessionsURL.appendingPathComponent(name)
+            guard let beat = (try? Data(contentsOf: url)).flatMap(SessionBeat.parse) else { continue }
+            if now.timeIntervalSince1970 * 1000 - beat.updatedAt > age * 1000 { try? fm.removeItem(at: url) }
+        }
     }
 
     /// Applies `change` to the current settings and writes them, newer than whatever is there.

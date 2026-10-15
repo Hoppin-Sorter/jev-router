@@ -1,5 +1,5 @@
 // The local contract between the jev-router plugin, the menu bar widget and the CLI:
-// three files in ~/.config/jev/. Plain JSON, no prompt text, ever.
+// files in ~/.config/jev/. Plain JSON, no prompt text, ever.
 //
 //   settings.json    what the person chose: mode, focus, toggles, and a one-shot
 //                    nudge for one session. Whoever writes it bumps updatedAt;
@@ -7,6 +7,12 @@
 //   last.json        the latest routing decision, the session it came from, and
 //                    whether that session is working right now.
 //   decisions.jsonl  one decision per line, newest last, capped at DECISIONS_MAX.
+//   sessions/<host>.json
+//                    a heartbeat from each Claude desktop session the plugin is running in,
+//                    named by the app's own id for the session (CLAUDE_CODE_HOST_SESSION_ID,
+//                    the one in the page's address). Rewritten every BEAT_MS while the
+//                    session's process runs and marked ended when it stops, so the widget
+//                    can tell a session where Jev is running from one with no process yet.
 //
 // widget/Sources/JevCore/Contract.swift reads and writes the same shapes.
 
@@ -69,11 +75,28 @@ export type LastState = {
   updatedAt: number
 }
 
+export type SessionBeat = {
+  version: 1
+  /** The app's id for the session (local_…), which also names the file. */
+  host: string
+  /** The transcript's id, as in last.json and decisions.jsonl. */
+  session: string
+  startedAt: number
+  /** ms since the epoch; a beat older than BEAT_STALE_MS means the process is gone. */
+  updatedAt: number
+  /** The session ended cleanly. */
+  ended?: boolean
+}
+
 export const CONFIG_DIR = '.config/jev'
 export const SETTINGS_FILE = 'settings.json'
 export const LAST_FILE = 'last.json'
 export const DECISIONS_FILE = 'decisions.jsonl'
+export const SESSIONS_DIR = 'sessions'
 export const DECISIONS_MAX = 500
+export const BEAT_MS = 30_000
+/** Three missed beats: the process quit without saying so (a crash, a forced quit). */
+export const BEAT_STALE_MS = 90_000
 /** Jev's list price: $0.042 per million input tokens. */
 export const JEV_USD_PER_MTOK = 0.042
 
@@ -133,3 +156,27 @@ export function appendDecision(existing: string, d: DecisionRecord, max = DECISI
 /** A rough token count for the request sent to Jev (about four characters a token). */
 export const estimateTokens = (body: string) => Math.ceil(body.length / 4)
 export const jevCost = (tokens: number) => (tokens * JEV_USD_PER_MTOK) / 1_000_000
+
+/** A host session id safe to use as a file name, or undefined for anything else. */
+export function beatFileName(host: string | undefined): string | undefined {
+  const h = host?.trim()
+  return h && /^[A-Za-z0-9_-]{1,128}$/.test(h) ? `${h}.json` : undefined
+}
+
+export const formatBeat = (b: SessionBeat) => JSON.stringify(b) + '\n'
+
+/** Reads a heartbeat file; junk or a missing field gives undefined. */
+export function parseBeat(text: string): SessionBeat | undefined {
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (!isObject(raw) || typeof raw.host !== 'string' || typeof raw.session !== 'string') return undefined
+  if (typeof raw.startedAt !== 'number' || typeof raw.updatedAt !== 'number') return undefined
+  return { version: 1, host: raw.host, session: raw.session, startedAt: raw.startedAt, updatedAt: raw.updatedAt, ...(raw.ended === true ? { ended: true } : {}) }
+}
+
+/** Whether the session's process was running Jev as of `now`. */
+export const isBeatLive = (b: SessionBeat | undefined, now: number) => !!b && !b.ended && now - b.updatedAt <= BEAT_STALE_MS

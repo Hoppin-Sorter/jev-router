@@ -128,7 +128,7 @@ test('/jev and a widget nudge change routing', async ($, on) => {
   expect(w.steps[2]?.model).toBe('claude-sonnet-5-5')
 })
 
-test('the status line shows the session is connected from the start', async ($, on) => {
+test('the status line shows the session is connected from the start', { options: { statusLine: true } }, async ($, on) => {
   const w = world(on, { current: { tier: { routine: 0.9, complex: 0.1 }, risky: 0, skill: { none: 1 } } })
   await startSession($, on)
   expect(w.statuses.at(-1)).toBe('Jev: auto')
@@ -144,7 +144,53 @@ test('the status line shows the session is connected from the start', async ($, 
   expect(w.statuses.at(-1)).toBeUndefined()
 })
 
-test('without a key, the status line says so as soon as the session starts', async ($, on) => {
+test('in the desktop app a session keeps a heartbeat the widget can match to the page', async ($, on) => {
+  const host = 'local_83300ae2-adf5-4e6f-9015-ef0aa780feba'
+  const w = world(on, { current: { tier: { routine: 1 }, risky: 0, skill: { none: 1 } } }, { TYPESAFE_API_KEY: 'test-key', CLAUDE_CODE_HOST_SESSION_ID: host })
+  on('session.end', async ($, e) => ({ sessionId: 'sess-a' }))
+  const file = `${JEV}/sessions/${host}.json`
+  await startSession($, on)
+  const first = JSON.parse(w.files.get(file)!)
+  expect(first).toEqual({ version: 1, host, session: 'sess-a', startedAt: 1_000_000, updatedAt: 1_000_000 })
+
+  // Every 30 seconds while the process runs.
+  await w.clock.advance(30_000)
+  expect(JSON.parse(w.files.get(file)!).updatedAt).toBe(1_030_000)
+
+  // A /clear keeps the process, and so the heartbeat; quitting ends it.
+  await $.session.end({ reason: 'clear' })
+  expect(JSON.parse(w.files.get(file)!).ended).toBeUndefined()
+  await $.session.end({ reason: 'prompt_input_exit' })
+  expect(JSON.parse(w.files.get(file)!).ended).toBe(true)
+  await w.clock.advance(60_000)
+  expect(JSON.parse(w.files.get(file)!).updatedAt).toBe(1_030_000)
+})
+
+test('outside the desktop app no heartbeat is written', async ($, on) => {
+  const w = world(on, { current: { tier: { routine: 1 }, risky: 0, skill: { none: 1 } } })
+  await startSession($, on)
+  expect([...w.files.keys()].some(k => k.includes('/sessions/'))).toBe(false)
+})
+
+test('the status line is off by default', async ($, on) => {
+  const w = world(on, { current: { tier: { routine: 0.9, complex: 0.1 }, risky: 0, skill: { none: 1 } } })
+  await startSession($, on)
+  await submit($, 'add a dark mode toggle')
+  await step($)
+  expect(w.steps[0]?.model).toBe('claude-sonnet-5-5')
+  expect(w.statuses).toEqual([])
+  expect(w.toasts).toEqual([])
+})
+
+test('with the status line off, a missing key is still pointed out once', async ($, on) => {
+  const w = world(on, { current: { tier: { routine: 1 }, risky: 0, skill: { none: 1 } } }, {})
+  await startSession($, on)
+  expect(w.statuses).toEqual([])
+  expect(w.toasts.length).toBe(1)
+  expect(w.toasts[0]).toContain('no API key')
+})
+
+test('without a key, the status line says so as soon as the session starts', { options: { statusLine: true } }, async ($, on) => {
   const w = world(on, { current: { tier: { routine: 1 }, risky: 0, skill: { none: 1 } } }, {})
   await startSession($, on)
   expect(w.statuses.at(-1)).toBe('Jev: no API key (run /jev)')

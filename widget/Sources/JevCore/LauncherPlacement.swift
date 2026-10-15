@@ -60,10 +60,18 @@ public enum LauncherPlacement {
     /// a window to float over, and that window shows a Claude Code session (not a chat). While
     /// Jev Bar itself is in front, say its menu bar panel is open, nothing changes, so using Jev
     /// Bar doesn't make the icon blink away.
-    public static func shouldShow(confined: Bool, claudeFrontmost: Bool, ownAppFrontmost: Bool, hasWindow: Bool, inCodeSession: Bool = true, wasShowing: Bool) -> Bool {
+    public static func shouldShow(confined: Bool, claudeFrontmost: Bool, ownAppFrontmost: Bool, hasWindow: Bool, inCodeSession: Bool = true, jevRunning: Bool = true, wasShowing: Bool) -> Bool {
         if !confined { return true }
         if ownAppFrontmost { return wasShowing }
-        return claudeFrontmost && hasWindow && inCodeSession
+        return claudeFrontmost && hasWindow && inCodeSession && jevRunning
+    }
+
+    /// The app's id for the session on screen, from the page's address
+    /// (https://claude.ai/epitaxy/local_…); the plugin names its heartbeat file after it.
+    public static func hostSessionID(pageURL: String) -> String? {
+        guard let last = URL(string: pageURL)?.pathComponents.last, last.hasPrefix("local_"),
+              SessionBeat.fileName(host: last) != nil else { return nil }
+        return last
     }
 
     /// The Claude app names its page "<session> - Claude Code" in the Code tab; a chat's name ends

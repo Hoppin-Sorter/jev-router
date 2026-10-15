@@ -218,8 +218,37 @@ do {
     let pane = CGRect(x: 1100, y: 0, width: 14, height: 949)
     check(P.sessionArea(window: full, sidebarHandle: handle, paneHandle: pane) == CGRect(x: 272, y: 0, width: 828, height: 949), "left of an open side pane")
     check(P.sessionArea(window: full, sidebarHandle: nil, paneHandle: pane).minX == 0, "a pane with the sidebar collapsed")
+    // Only over sessions Jev is running in.
+    check(!P.shouldShow(confined: true, claudeFrontmost: true, ownAppFrontmost: false, hasWindow: true, jevRunning: false, wasShowing: true), "a Code session with no Jev process yet: hidden")
+    check(P.hostSessionID(pageURL: "https://claude.ai/epitaxy/local_83300ae2-adf5-4e6f-9015-ef0aa780feba") == "local_83300ae2-adf5-4e6f-9015-ef0aa780feba", "the session id from the page address")
+    check(P.hostSessionID(pageURL: "https://claude.ai/epitaxy/local_83300ae2?x=1") == "local_83300ae2", "a query string doesn't get in")
+    check(P.hostSessionID(pageURL: "https://claude.ai/new") == nil && P.hostSessionID(pageURL: "") == nil, "no session in the address")
     let inArea = P.frame(for: .standard, size: size, in: P.sessionArea(window: full, sidebarHandle: handle))
     check(inArea.minX >= 272 && inArea.midX == 272 + 620, "the icon centres in the session area, not the window")
+}
+
+// MARK: Session heartbeats
+
+do {
+    let host = "local_83300ae2-adf5-4e6f-9015-ef0aa780feba"
+    check(SessionBeat.fileName(host: host) == host + ".json", "a host id names its file")
+    check(SessionBeat.fileName(host: "../settings") == nil && SessionBeat.fileName(host: "") == nil && SessionBeat.fileName(host: "é") == nil, "anything else doesn't")
+    let beats = ConfigStore(dir: scratch.appendingPathComponent("beats"))
+    check(beats.readBeat(host: host) == nil, "no file: no beat")
+    try! FileManager.default.createDirectory(at: beats.sessionsURL, withIntermediateDirectories: true)
+    // The plugin's own format (lib/contract.ts formatBeat).
+    try! Data(#"{"version":1,"host":"local_83300ae2-adf5-4e6f-9015-ef0aa780feba","session":"sess-a","startedAt":10,"updatedAt":1000}"#.utf8)
+        .write(to: beats.sessionsURL.appendingPathComponent(host + ".json"))
+    let beat = beats.readBeat(host: host)
+    check(beat?.session == "sess-a" && beat?.ended == nil, "reads the plugin's beat")
+    check(beat?.isLive(now: 1000 + SessionBeat.staleAfter) == true && beat?.isLive(now: 1001 + SessionBeat.staleAfter) == false, "live until three beats are missed")
+    var ended = beat!
+    ended.ended = true
+    check(!ended.isLive(now: 1000), "an ended session isn't live")
+    try! Data(#"{"version":1,"host":"local_old","session":"s","startedAt":1,"updatedAt":1}"#.utf8)
+        .write(to: beats.sessionsURL.appendingPathComponent("local_old.json"))
+    beats.pruneBeats(olderThan: 3600, now: Date(timeIntervalSince1970: 2 * 3600))
+    check(beats.readBeat(host: "local_old") == nil, "old beats are pruned")
 }
 
 try? FileManager.default.removeItem(at: scratch)
