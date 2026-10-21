@@ -57,12 +57,6 @@
       "title": "Status line",
       "description": "Show what Jev picked in the line under the prompt. Off by default: the Jev Bar widget shows the same, and the desktop app draws this line beside the reply box.",
       "default": false
-    },
-    "syncPicker": {
-      "type": "boolean",
-      "title": "Show Jev's pick in the model picker",
-      "description": "Also set the session's model to each pick, as the /config Model row does, so the desktop app's model picker shows it. That row is saved in ~/.claude/settings.json; your previous model is put back with /jev picker off or /jev off.",
-      "default": false
     }
   }
 }
