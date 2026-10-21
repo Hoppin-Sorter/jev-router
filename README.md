@@ -110,12 +110,6 @@ For a line under the prompt as well, turn on the `statusLine` option (below). It
 
 Change focus, mode and the switches with [`/jev`](#commands) or the [menu bar widget](#menu-bar-widget-macos). Your choices are remembered across sessions and shared through `~/.config/jev/settings.json`. The widget's **− / +** moves a session's model down or up one tier right away, mid-turn included; routing picks up again with the next task.
 
-**Picker sync (deprecated).** Earlier attempts to show Jev's model in the picker went through this route: each pick sets the Model row of `/config`, so a new session starts on Jev's last pick. But Claude's UI picker doesn't read from that row in real time — it shows stale values. This doesn't work. makes the model picker show Jev's pick. Normally Jev switches the model for each request underneath, and the picker keeps showing the session's own model. With picker sync on, each new pick also sets the session's model through the Model row of `/config`. Three things to know:
-
-- That row is saved in `~/.claude/settings.json`, so a new session starts on Jev's last pick until Jev picks again. Jev remembers the model you had saved before and puts it back with `/jev picker off` or `/jev off`.
-- The picker shows model families: Jev's Haiku 4.5 shows as the newest Haiku. The request still goes to the model Jev chose, and the effort shown is still the session's.
-- The picker can lag a turn behind.
-
 **Shadow mode** asks Jev and logs what it would pick, but leaves the session's model alone and hints no skill. Use it to see how routing would behave before you let it switch anything. It still costs one Jev call per prompt.
 
 ## Menu bar widget (macOS)
@@ -200,7 +194,6 @@ Set in `/plugin configure jev-router@jev-router`. Choices made with `/jev` or th
 | `skillHints` | `true` | Tell Claude which installed skill Jev picked. |
 | `effortRouting` | `false` | Also set reasoning effort (see above). Haiku takes none. Off keeps your session's effort. |
 | `statusLine` | `false` | Show Jev's pick in the line under the prompt (see [Is this session using Jev?](#is-this-session-using-jev)). |
-| `syncPicker` | `false` | Also set the session's model to each pick, so the desktop app's model picker shows it. Same as `/jev picker on`. See below. |
 
 ## Tune it with your own eval
 

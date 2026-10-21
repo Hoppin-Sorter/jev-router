@@ -51,11 +51,6 @@ import type { Settings } from '../types'
 // The rubric, thresholds and decisions live in lib/jev-router.ts, shared with agents
 // that use the router outside Claude Code.
 //
-// With picker sync on (the syncPicker option, or /jev picker on), each pick also sets the
-// session's model the way the /config Model row does, so the desktop app's model picker
-// shows it. That row is saved in ~/.claude/settings.json; the model it held before is
-// remembered and put back when the router or picker sync is turned off.
-//
 // Shadow mode asks Jev and logs what it would pick without switching the model or
 // hinting a skill. The menu bar widget and this plugin share ~/.config/jev/ (see
 // lib/contract.ts): settings.json both ways, last.json, decisions.jsonl and, in the
@@ -120,9 +115,6 @@ let working = { on: false, since: 0 }
 // fresh, so the widget shows only over sessions Jev is running in.
 let beat: { host: string; startedAt: number; timer?: Timer } | undefined
 let showStatus = false
-let pickerOn = false
-// The value picker sync last set, so an unchanged pick isn't written again.
-let pickerSynced: string | undefined
 
 const plan = (): ModelPlan => ({
   models,
@@ -298,7 +290,6 @@ async function applyShared($: EngineInterface, nudgeOnly = false) {
     if (shared.mode !== sharedMode(mode)) {
       mode = shared.mode
       active = undefined
-      if (mode !== 'auto') await unsyncPicker($)
       await $.store.set('mode', mode)
       await status($, modeStatus())
     }
@@ -328,46 +319,6 @@ async function status($: EngineInterface, text: string | undefined) {
   if (showStatus) await $.ui.status(text)
 }
 
-/** The /config Model row's alias for a model id; the row takes aliases, not ids. */
-function pickerAlias(model: string): string | undefined {
-  return ['haiku', 'sonnet', 'opus', 'fable'].find(f => model.includes(`-${f}-`))
-}
-
-/**
- * Picker sync: sets the session's model to the pick, through the Model row of /config, so
- * the model picker shows it. The first time, it remembers what ~/.claude/settings.json held
- * (null for no model saved), to put back on unsyncPicker.
- */
-async function syncPicker($: EngineInterface, model: string) {
-  if (!pickerOn || mode === 'off' || mode === 'shadow') return
-  const value = pickerAlias(model)
-  if (!value || value === pickerSynced) return
-  try {
-    if ((await $.store.get('pickerOriginal')) === undefined) {
-      const home = await $.env.get('HOME')
-      let saved: string | null = null
-      try {
-        const m = home ? (JSON.parse(await $.fs.read(`${home}/.claude/settings.json`)) as { model?: unknown }).model : undefined
-        saved = typeof m === 'string' ? m : null
-      } catch {}
-      await $.store.set('pickerOriginal', { model: saved })
-    }
-    const r = await $.config.set({ key: 'model', value })
-    if (!('deny' in r && r.deny)) pickerSynced = value
-  } catch {}
-}
-
-/** Puts back the model saved before picker sync first changed it. */
-async function unsyncPicker($: EngineInterface) {
-  const original = (await $.store.get('pickerOriginal')) as { model: string | null } | undefined
-  pickerSynced = undefined
-  if (!original) return
-  try {
-    await $.config.set({ key: 'model', value: original.model ?? 'default' })
-    await $.store.delete('pickerOriginal')
-  } catch {}
-}
-
 /** Takes down a line an earlier version left on screen (a reload keeps what was last set). */
 async function clearStatusIfOff($: EngineInterface) {
   if (!showStatus) await $.ui.status(undefined)
@@ -391,8 +342,6 @@ async function setFocus($: EngineInterface, next: Focus) {
 async function setMode($: EngineInterface, next: Mode) {
   mode = next
   active = next === 'auto' || next === 'shadow' || next === 'off' ? undefined : { tier: next, model: models[next], effort: TIER_EFFORT[next], at: await $.clock.now(), specialist: false }
-  if (next === 'off' || next === 'shadow') await unsyncPicker($)
-  else if (active) await syncPicker($, active.model)
   await $.store.set('mode', next)
   await status($, modeStatus())
   await writeShared($)
@@ -413,7 +362,6 @@ async function nudge($: EngineInterface, by: -1 | 1) {
   const now = await $.clock.now()
   active = { tier, model: c.model, effort: c.effort, at: now, specialist: c.specialist, subject: active?.subject }
   await status($, `Jev → ${label(active.model)} (you)`)
-  await syncPicker($, active.model)
   await record($, {
     at: now,
     session: await ensureSessionId($),
@@ -436,8 +384,6 @@ export const register: Register = (on, options) => {
     deep: typeof options.deepModel === 'string' ? options.deepModel : 'claude-opus-5-5',
   }
   showStatus = options.statusLine === true
-  pickerOn = options.syncPicker === true
-  pickerSynced = undefined
   const defaults: Settings = {
     effort: options.effortRouting === true,
     skills: options.skillHints !== false,
@@ -463,8 +409,6 @@ export const register: Register = (on, options) => {
     mode = isMode(savedMode) ? savedMode : 'auto'
     focus = isFocus(savedFocus) ? savedFocus : startFocus
     settings = { ...defaults, ...(savedSettings && typeof savedSettings === 'object' ? (savedSettings as Partial<Settings>) : {}) }
-    const savedPicker = await $.store.get('syncPicker')
-    if (typeof savedPicker === 'boolean') pickerOn = savedPicker
     const savedNudge = await $.store.get('seenNudge')
     seenNudge = typeof savedNudge === 'string' ? savedNudge : undefined
     await applyShared($)
@@ -486,7 +430,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'jev',
       description: 'Jev router: status, auto, shadow, off, pin <tier>, reset, focus <0-4>',
-      argumentHint: '[auto | shadow | off | pin <tier> | reset | focus <0-4|name> | effort|skills|specialists|picker on|off]',
+      argumentHint: '[auto | shadow | off | pin <tier> | reset | focus <0-4|name> | effort|skills|specialists on|off]',
     })
     return next(e)
   })
@@ -556,7 +500,6 @@ export const register: Register = (on, options) => {
       why += `, held on ${label(model)}`
     }
     active = { tier, model, effort: c.effort, at: now, specialist, subject: subject ?? active?.subject }
-    if (!shadow) await syncPicker($, model)
     const effort = settings.effort && c.effort ? c.effort : undefined
     await record($, {
       at: now,
@@ -652,18 +595,6 @@ export const register: Register = (on, options) => {
       }
       return { text: `Focus: ${FOCUS_LABELS[focus]} (${focus}).${arg ? '' : ' /jev focus <0-4|name> changes it.'}` }
     }
-    if (verb === 'picker') {
-      if (arg !== 'on' && arg !== 'off') return { text: 'Use /jev picker on or /jev picker off.' }
-      pickerOn = arg === 'on'
-      await $.store.set('syncPicker', pickerOn)
-      if (pickerOn && active) await syncPicker($, active.model)
-      if (!pickerOn) await unsyncPicker($)
-      return {
-        text: pickerOn
-          ? 'Picker sync on: each pick also sets the session model, so the model picker shows it. Your saved model is put back with /jev picker off or /jev off.'
-          : 'Picker sync off: your saved model is back.',
-      }
-    }
     if (verb === 'effort' || verb === 'skills' || verb === 'specialists') {
       if (arg !== 'on' && arg !== 'off') return { text: `Use /jev ${verb} on or /jev ${verb} off.` }
       if (settings[verb] !== (arg === 'on')) await toggle($, verb)
@@ -677,7 +608,7 @@ export const register: Register = (on, options) => {
       `Jev router: ${mode === 'auto' || mode === 'off' || mode === 'shadow' ? mode : `pinned to ${mode}`}  ·  focus ${FOCUS_LABELS[focus]} (${focus})`,
       `Tiers: ${TIERS.map(t => `${t} → ${label(models[t])}`).join(', ')}`,
       `Specialists: ${onOff(settings.specialists)}${settings.specialists ? ' (hard science and math → Fable 5.1 at balanced focus and above)' : ''}`,
-      `Effort routing: ${onOff(settings.effort)}  ·  Skill hints: ${settings.skills ? `on (${catalog?.skills.length ?? '?'} skills)` : 'off'}  ·  Picker sync: ${onOff(pickerOn)}`,
+      `Effort routing: ${onOff(settings.effort)}  ·  Skill hints: ${settings.skills ? `on (${catalog?.skills.length ?? '?'} skills)` : 'off'}`,
       key
         ? `API key: found (${key.from})`
         : 'API key: missing. Get one at console.typesafe.ai, then save it to ~/.config/jev/api_key (or set TYPESAFE_API_KEY).',
@@ -692,7 +623,7 @@ export const register: Register = (on, options) => {
         lines.push(`  ${time}  ${(label(d.model) + effort).padEnd(16)} ${d.skill ? `/${d.skill}  ` : ''}${d.why}${flags}`)
       }
     }
-    lines.push('', 'Commands: /jev auto | shadow | off | pin <tier> | reset | focus <0-4> | effort|skills|specialists|picker on|off')
+    lines.push('', 'Commands: /jev auto | shadow | off | pin <tier> | reset | focus <0-4> | effort|skills|specialists on|off')
     return { text: lines.join('\n') }
   })
 }
