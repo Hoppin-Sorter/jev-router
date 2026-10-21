@@ -37,6 +37,8 @@ export function world(on: On, reply: { current: Reply | 'error' }, env: Record<s
   const steps: TurnStepInput[] = []
   const statuses: (string | undefined)[] = []
   const toasts: string[] = []
+  // /config rows the plugin changed (picker sync), in order.
+  const configSets: { key: string; value: unknown }[] = []
   // ~/.config/jev/ in memory; no api_key file, so the key comes from env.
   const files = new Map<string, string>()
 
@@ -55,6 +57,10 @@ export function world(on: On, reply: { current: Reply | 'error' }, env: Record<s
   on('ui.toast', async ($, e) => {
     toasts.push(e.text)
     return { value: undefined }
+  })
+  on('config.set', async ($, e) => {
+    configSets.push({ key: e.key, value: e.value })
+    return { value: e.value }
   })
   on('session.id', async () => ({ value: 'sess-a' }))
   on('turn.complete', async ($, e) => ({ text: e.answer }))
@@ -94,7 +100,7 @@ export function world(on: On, reply: { current: Reply | 'error' }, env: Record<s
       JSON.stringify({ version: 1, mode: 'auto', focus: 2, effort: false, skills: true, specialists: true, nudge: null, ...patch, updatedAt: ++widgetAt, updatedBy: 'widget' }),
     )
 
-  return { clock, requests, steps, statuses, toasts, files, widget }
+  return { clock, requests, steps, statuses, toasts, configSets, files, widget }
 }
 
 export const submit = ($: Engine, text: string, kind: 'composer' | 'scheduled-trigger' | 'task-notification' = 'composer') =>

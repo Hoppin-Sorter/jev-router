@@ -298,3 +298,65 @@ test('/jev writes its changes to settings.json, keeping a pending nudge', async 
   expect(saved.updatedBy).toBe('plugin')
   expect(saved.nudge.id).toBe('n9')
 })
+
+// Picker sync: the desktop app's model picker shows the session's model, so each pick also
+// sets it through /config's Model row, and the saved model comes back when it's turned off.
+
+const routine = { tier: { routine: 0.9, complex: 0.1 }, risky: 0, skill: { none: 1 } }
+
+test('picker sync is off by default: the session model is never changed', async ($, on) => {
+  const w = world(on, { current: routine })
+  await startSession($, on)
+  await submit($, 'add a dark mode toggle')
+  expect(w.configSets).toEqual([])
+})
+
+test('with picker sync on, each new pick sets the Model row once', { options: { syncPicker: true } }, async ($, on) => {
+  const reply: { current: Reply } = { current: routine }
+  const w = world(on, reply)
+  await startSession($, on)
+  await submit($, 'add a dark mode toggle')
+  expect(w.configSets).toEqual([{ key: 'model', value: 'sonnet' }])
+  // A follow-up on the same model writes nothing.
+  await submit($, 'yes, go ahead')
+  expect(w.configSets.length).toBe(1)
+  // A harder task moves it up.
+  reply.current = { tier: { complex: 0.9, deep: 0.1 }, risky: 0, skill: { none: 1 } }
+  await submit($, 'redesign the sync engine across services')
+  expect(w.configSets.at(-1)).toEqual({ key: 'model', value: 'opus' })
+})
+
+test('/jev off puts back the model saved before picker sync', { options: { syncPicker: true } }, async ($, on) => {
+  const w = world(on, { current: routine })
+  w.files.set('/home/t/.claude/settings.json', JSON.stringify({ theme: 'dark', model: 'opus' }))
+  await startSession($, on)
+  await submit($, 'add a dark mode toggle')
+  await jev($, 'off')
+  expect(w.configSets).toEqual([
+    { key: 'model', value: 'sonnet' },
+    { key: 'model', value: 'opus' },
+  ])
+})
+
+test('with no model saved before, turning picker sync off restores the default', { options: { syncPicker: true } }, async ($, on) => {
+  const w = world(on, { current: routine })
+  await startSession($, on)
+  await submit($, 'add a dark mode toggle')
+  await jev($, 'picker off')
+  expect(w.configSets.at(-1)).toEqual({ key: 'model', value: 'default' })
+  // Off now: later picks leave the session model alone.
+  await submit($, 'rename foo to bar')
+  expect(w.configSets.length).toBe(2)
+})
+
+test('/jev picker on syncs from the next pick; shadow mode never syncs', async ($, on) => {
+  const w = world(on, { current: routine })
+  await startSession($, on)
+  await jev($, 'picker on')
+  await jev($, 'shadow')
+  await submit($, 'add a dark mode toggle')
+  expect(w.configSets).toEqual([])
+  await jev($, 'auto')
+  await submit($, 'add a dark mode toggle')
+  expect(w.configSets).toEqual([{ key: 'model', value: 'sonnet' }])
+})
